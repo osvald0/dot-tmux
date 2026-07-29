@@ -11,8 +11,10 @@ Run the setup script from anywhere:
 ./setup.sh
 ```
 
-The script links `tmux.conf` to `~/.tmux.conf`. If `~/.tmux.conf` is an existing
-regular file, the script creates a timestamped backup before replacing it.
+The script links `tmux.conf` to `~/.tmux.conf`, installs TPM when needed, and
+installs the configured plugins. If `~/.tmux.conf` is an existing regular file,
+the script creates a timestamped backup before replacing it. Git is required to
+install TPM.
 
 After setting it up, start a new tmux server or reload the configuration from an
 existing session:
