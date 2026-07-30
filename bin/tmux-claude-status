@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+status=${1:-}
+
+if [[ -z ${TMUX:-} || -z ${TMUX_PANE:-} ]]; then
+  exit 0
+fi
+
+case $status in
+  ready)
+    icon='#[fg=#6272a4] '
+    ;;
+  working)
+    icon='#[fg=#bd93f9] 󰔟'
+    ;;
+  waiting)
+    icon='#[fg=#f1fa8c] '
+    ;;
+  done)
+    icon='#[fg=#50fa7b] '
+    ;;
+  error)
+    icon='#[fg=#ff5555] '
+    ;;
+  clear)
+    tmux set-option -pqu -t "$TMUX_PANE" @claude_status
+    tmux set-option -pqu -t "$TMUX_PANE" @claude_status_icon
+    tmux refresh-client -S 2>/dev/null || true
+    exit 0
+    ;;
+  *)
+    printf 'Usage: %s {ready|working|waiting|done|error|clear}\n' "$0" >&2
+    exit 2
+    ;;
+esac
+
+tmux set-option -pq -t "$TMUX_PANE" @claude_status "$status"
+tmux set-option -pq -t "$TMUX_PANE" @claude_status_icon "$icon"
+
+tmux refresh-client -S 2>/dev/null || true
