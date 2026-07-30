@@ -8,6 +8,15 @@ if [[ -z ${TMUX:-} || -z ${TMUX_PANE:-} ]]; then
   exit 0
 fi
 
+session_id=
+if [[ ! -t 0 ]] && command -v jq >/dev/null 2>&1; then
+  session_id=$(jq -r '.session_id // empty' 2>/dev/null || true)
+fi
+
+if [[ $session_id =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
+  tmux set-option -pq -t "$TMUX_PANE" @claude_session_id "$session_id"
+fi
+
 case $status in
   ready)
     icon='#[fg=#6272a4] '
@@ -27,6 +36,7 @@ case $status in
   clear)
     tmux set-option -pqu -t "$TMUX_PANE" @claude_status
     tmux set-option -pqu -t "$TMUX_PANE" @claude_status_icon
+    tmux set-option -pqu -t "$TMUX_PANE" @claude_session_id
     tmux refresh-client -S 2>/dev/null || true
     exit 0
     ;;

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+state_file=${1:-}
+
+if [[ ! -f $state_file ]]; then
+  exit 0
+fi
+
+pane_map=$(mktemp "${TMPDIR:-/tmp}/tmux-claude-panes.XXXXXX")
+updated_state=$(mktemp "${TMPDIR:-/tmp}/tmux-resurrect-state.XXXXXX")
+trap 'rm -f "$pane_map" "$updated_state"' EXIT
+
+delimiter=$'\t'
+tmux list-panes -a -F "#{session_name}${delimiter}#{window_index}${delimiter}#{pane_index}${delimiter}#{@claude_session_id}" > "$pane_map"
+
+awk -F '\t' -v OFS='\t' '
+  NR == FNR {
+    if (length($4) == 36 && $4 ~ /^[[:xdigit:]-]+$/) {
+      session_ids[$1 FS $2 FS $3] = $4
+    }
+    next
+  }
+
+  $1 == "pane" {
+    pane = $2 FS $3 FS $6
+    if (pane in session_ids) {
+      $11 = ":claude --resume " session_ids[pane]
+    }
+  }
+
+  { print }
+' "$pane_map" "$state_file" > "$updated_state"
+
+mv "$updated_state" "$state_file"
