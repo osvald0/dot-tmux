@@ -6,6 +6,8 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 config_source=$repo_root/tmux.conf
 config_target=$HOME/.tmux.conf
 tpm_root=$HOME/.tmux/plugins/tpm
+catppuccin_root=$HOME/.config/tmux/plugins/catppuccin/tmux
+catppuccin_version=v2.3.1
 local_bin=$HOME/.local/bin
 
 command -v jq >/dev/null 2>&1 || {
@@ -38,6 +40,11 @@ if [[ ! -d $tpm_root/.git ]]; then
 
   mkdir -p "$(dirname "$tpm_root")"
   git clone https://github.com/tmux-plugins/tpm "$tpm_root"
+fi
+
+if [[ ! -d $catppuccin_root/.git ]]; then
+  mkdir -p "$(dirname "$catppuccin_root")"
+  git clone -b "$catppuccin_version" https://github.com/catppuccin/tmux.git "$catppuccin_root"
 fi
 
 "$tpm_root/bin/install_plugins"
