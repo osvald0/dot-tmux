@@ -13,7 +13,8 @@ if [[ ! -t 0 ]] && command -v jq >/dev/null 2>&1; then
   session_id=$(jq -r '.session_id // empty' 2>/dev/null || true)
 fi
 
-if [[ $session_id =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
+# Claude Code and Codex use UUIDs, opencode uses ses_ ids
+if [[ $session_id =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ || $session_id =~ ^ses_[[:alnum:]]+$ ]]; then
   tmux set-option -pq -t "$TMUX_PANE" @claude_session_id "$session_id"
 fi
 

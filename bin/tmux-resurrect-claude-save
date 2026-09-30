@@ -17,7 +17,7 @@ tmux list-panes -a -F "#{session_name}${delimiter}#{window_index}${delimiter}#{p
 
 awk -F '\t' -v OFS='\t' '
   NR == FNR {
-    if (length($4) == 36 && $4 ~ /^[[:xdigit:]-]+$/) {
+    if ((length($4) == 36 && $4 ~ /^[[:xdigit:]-]+$/) || $4 ~ /^ses_[[:alnum:]]+$/) {
       session_ids[$1 FS $2 FS $3] = $4
     }
     next
@@ -25,8 +25,17 @@ awk -F '\t' -v OFS='\t' '
 
   $1 == "pane" {
     pane = $2 FS $3 FS $6
-    if (pane in session_ids) {
-      $11 = ":claude --resume " session_ids[pane]
+    id = session_ids[pane]
+    split(substr($11, 2), words, " ")
+    tool = words[1]
+    sub(/.*\//, "", tool)
+
+    if (tool == "claude") {
+      $11 = id != "" ? ":claude --resume " id : ":claude --continue"
+    } else if (tool == "codex") {
+      $11 = id != "" ? ":codex resume " id : ":codex resume --last"
+    } else if (tool == "opencode") {
+      $11 = id != "" ? ":opencode --session " id : ":opencode --continue"
     }
   }
 

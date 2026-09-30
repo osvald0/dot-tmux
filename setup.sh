@@ -26,6 +26,10 @@ mkdir -p "$local_bin"
 ln -sfn "$repo_root/bin/tmux-claude-status" "$local_bin/tmux-claude-status"
 ln -sfn "$repo_root/bin/tmux-resurrect-claude-save" "$local_bin/tmux-resurrect-claude-save"
 
+opencode_plugins=$HOME/.config/opencode/plugins
+mkdir -p "$opencode_plugins"
+ln -sfn "$repo_root/opencode/tmux-agent-status.js" "$opencode_plugins/tmux-agent-status.js"
+
 if [[ ! -d $tpm_root/.git ]]; then
   command -v git >/dev/null 2>&1 || {
     printf 'Git is required to install TPM.\n' >&2
