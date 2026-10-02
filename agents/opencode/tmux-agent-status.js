@@ -1,12 +1,12 @@
-// Reports opencode session state to tmux through tmux-claude-status, matching
+// Reports opencode session state to tmux through tmux-agent-status, matching
 // the Claude Code and Codex hooks: tab status icons plus the session id that
-// tmux-resurrect-claude-save uses to restore the pane.
+// tmux-resurrect-agent-save uses to restore the pane.
 
 import { execFile, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const STATUS_SCRIPT = join(homedir(), ".local/bin/tmux-claude-status");
+const STATUS_SCRIPT = join(homedir(), ".local/bin/tmux-agent-status");
 
 const BUSY_STATUSES = new Set(["active", "busy", "pending", "retry", "running", "streaming", "working"]);
 

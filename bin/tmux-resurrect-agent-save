@@ -8,12 +8,12 @@ if [[ ! -f $state_file ]]; then
   exit 0
 fi
 
-pane_map=$(mktemp "${TMPDIR:-/tmp}/tmux-claude-panes.XXXXXX")
+pane_map=$(mktemp "${TMPDIR:-/tmp}/tmux-agent-panes.XXXXXX")
 updated_state=$(mktemp "${TMPDIR:-/tmp}/tmux-resurrect-state.XXXXXX")
 trap 'rm -f "$pane_map" "$updated_state"' EXIT
 
 delimiter=$'\t'
-tmux list-panes -a -F "#{session_name}${delimiter}#{window_index}${delimiter}#{pane_index}${delimiter}#{@claude_session_id}" > "$pane_map"
+tmux list-panes -a -F "#{session_name}${delimiter}#{window_index}${delimiter}#{pane_index}${delimiter}#{@agent_session_id}" > "$pane_map"
 
 awk -F '\t' -v OFS='\t' '
   NR == FNR {

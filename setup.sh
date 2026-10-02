@@ -25,12 +25,13 @@ ln -sfn "$config_source" "$config_target"
 printf 'Linked %s to %s\n' "$config_target" "$config_source"
 
 mkdir -p "$local_bin"
-ln -sfn "$repo_root/bin/tmux-claude-status" "$local_bin/tmux-claude-status"
-ln -sfn "$repo_root/bin/tmux-resurrect-claude-save" "$local_bin/tmux-resurrect-claude-save"
+ln -sfn "$repo_root/bin/tmux-agent-status" "$local_bin/tmux-agent-status"
+ln -sfn "$repo_root/bin/tmux-resurrect-agent-save" "$local_bin/tmux-resurrect-agent-save"
 ln -sfn "$repo_root/bin/tmux-agent-next" "$local_bin/tmux-agent-next"
 
 # Merges an agent's hooks from agents/ into its config file. Hook groups that
-# call tmux-claude-status are replaced, and every other setting is kept.
+# call tmux-agent-status (or its old name, tmux-claude-status) are replaced,
+# and every other setting is kept.
 merge_agent_hooks() {
   local source=$1 target=$2 merged created=
 
@@ -42,7 +43,7 @@ merge_agent_hooks() {
 
   # Leave the file untouched when our hooks already match, so tools that track
   # hooks by position (Codex trusts each one by index) do not ask again
-  local ours='{hooks: ((.hooks // {}) | with_entries(.value |= map(select(any(.hooks[]?; .command | test("tmux-claude-status"))))) | with_entries(select(.value | length > 0)))}'
+  local ours='{hooks: ((.hooks // {}) | with_entries(.value |= map(select(any(.hooks[]?; .command | test("tmux-(agent|claude)-status"))))) | with_entries(select(.value | length > 0)))}'
   if [[ $(jq -S "$ours" "$target") == "$(jq -S . "$source")" ]]; then
     return
   fi
@@ -50,7 +51,7 @@ merge_agent_hooks() {
   merged=$(jq --slurpfile ours "$source" '
     .hooks = (
       (.hooks // {})
-      | with_entries(.value |= map(select(any(.hooks[]?; .command | test("tmux-claude-status")) | not)))
+      | with_entries(.value |= map(select(any(.hooks[]?; .command | test("tmux-(agent|claude)-status")) | not)))
       | with_entries(select(.value | length > 0))
     )
     | reduce ($ours[0].hooks | to_entries[]) as $event (.; .hooks[$event.key] += $event.value)

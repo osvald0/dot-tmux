@@ -6,7 +6,7 @@
 set -euo pipefail
 
 current=$(tmux display-message -p '#{pane_id}')
-panes=$(tmux list-panes -a -F '#{pane_id} #{@claude_status}')
+panes=$(tmux list-panes -a -F '#{pane_id} #{@agent_status}')
 
 for state in waiting done; do
   targets=$(awk -v state="$state" '$2 == state { print $1 }' <<< "$panes")

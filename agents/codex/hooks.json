@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "$HOME/.local/bin/tmux-claude-status working",
+            "command": "$HOME/.local/bin/tmux-agent-status working",
             "type": "command"
           }
         ],
@@ -15,7 +15,7 @@
       {
         "hooks": [
           {
-            "command": "$HOME/.local/bin/tmux-claude-status clear",
+            "command": "$HOME/.local/bin/tmux-agent-status clear",
             "type": "command"
           }
         ]
@@ -25,7 +25,7 @@
       {
         "hooks": [
           {
-            "command": "$HOME/.local/bin/tmux-claude-status ready",
+            "command": "$HOME/.local/bin/tmux-agent-status ready",
             "type": "command"
           }
         ]
@@ -35,7 +35,7 @@
       {
         "hooks": [
           {
-            "command": "$HOME/.local/bin/tmux-claude-status done",
+            "command": "$HOME/.local/bin/tmux-agent-status done",
             "type": "command"
           }
         ]
@@ -45,7 +45,7 @@
       {
         "hooks": [
           {
-            "command": "$HOME/.local/bin/tmux-claude-status working",
+            "command": "$HOME/.local/bin/tmux-agent-status working",
             "type": "command"
           }
         ]
@@ -55,7 +55,7 @@
       {
         "hooks": [
           {
-            "command": "$HOME/.local/bin/tmux-claude-status waiting",
+            "command": "$HOME/.local/bin/tmux-agent-status waiting",
             "type": "command"
           }
         ],
@@ -66,7 +66,7 @@
       {
         "hooks": [
           {
-            "command": "$HOME/.local/bin/tmux-claude-status working",
+            "command": "$HOME/.local/bin/tmux-agent-status working",
             "type": "command"
           }
         ],

@@ -18,7 +18,7 @@ fi
 # this session, else the most recently active Codex pane in the same directory.
 if [[ $transcript_path == "$HOME/.codex/"* ]]; then
   TMUX_PANE=$(
-    tmux list-panes -a -F $'#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{@claude_session_id}\t#{window_activity}' 2>/dev/null |
+    tmux list-panes -a -F $'#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{@agent_session_id}\t#{window_activity}' 2>/dev/null |
       awk -F '\t' -v sid="$session_id" -v cwd="$cwd" '
         $2 != "codex" { next }
         sid != "" && $4 == sid { exact = $1 }
@@ -35,7 +35,7 @@ fi
 
 # Claude Code and Codex use UUIDs, opencode uses ses_ ids
 if [[ $session_id =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ || $session_id =~ ^ses_[[:alnum:]]+$ ]]; then
-  tmux set-option -pq -t "$TMUX_PANE" @claude_session_id "$session_id"
+  tmux set-option -pq -t "$TMUX_PANE" @agent_session_id "$session_id"
 fi
 
 case $status in
@@ -55,9 +55,9 @@ case $status in
     icon='#[fg=#f38ba8] '
     ;;
   clear)
-    tmux set-option -pqu -t "$TMUX_PANE" @claude_status
-    tmux set-option -pqu -t "$TMUX_PANE" @claude_status_icon
-    tmux set-option -pqu -t "$TMUX_PANE" @claude_session_id
+    tmux set-option -pqu -t "$TMUX_PANE" @agent_status
+    tmux set-option -pqu -t "$TMUX_PANE" @agent_status_icon
+    tmux set-option -pqu -t "$TMUX_PANE" @agent_session_id
     tmux refresh-client -S 2>/dev/null || true
     exit 0
     ;;
@@ -92,10 +92,10 @@ notify() {
   printf '\e]777;notify;%s;%s\e\\' "${agent//;/,}" "${where//;/,} ${message//;/,}" > "$client_tty"
 }
 
-previous=$(tmux show-options -pqv -t "$TMUX_PANE" @claude_status)
+previous=$(tmux show-options -pqv -t "$TMUX_PANE" @agent_status)
 
-tmux set-option -pq -t "$TMUX_PANE" @claude_status "$status"
-tmux set-option -pq -t "$TMUX_PANE" @claude_status_icon "$icon"
+tmux set-option -pq -t "$TMUX_PANE" @agent_status "$status"
+tmux set-option -pq -t "$TMUX_PANE" @agent_status_icon "$icon"
 
 tmux refresh-client -S 2>/dev/null || true
 

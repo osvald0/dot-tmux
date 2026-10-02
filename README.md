@@ -66,7 +66,7 @@ states as a colored dot next to each window and pane.
 
 ## Agent status
 
-`tmux-claude-status` stores an agent's state on its pane, which drives the tab
+`tmux-agent-status` stores an agent's state on its pane, which drives the tab
 colors, the picker, and session restore. The helper does nothing outside tmux.
 Each agent calls it from the integration in `agents/`:
 
@@ -77,7 +77,7 @@ Each agent calls it from the integration in `agents/`:
 | opencode | `agents/opencode/tmux-agent-status.js` | `~/.config/opencode/plugins` (linked) |
 
 The hook files hold only this repository's hooks. Setup merges them into each
-agent's config: hook groups that call `tmux-claude-status` are replaced, and
+agent's config: hook groups that call `tmux-agent-status` are replaced, and
 every other setting and hook (permissions, plugins, other tools' hooks) is kept.
 Codex asks you to trust new or changed hooks the next time it starts.
 
@@ -144,7 +144,7 @@ Submitting a prompt is sufficient.
 
 ## Notifications
 
-`tmux-claude-status` sends a desktop notification when a Claude Code or
+`tmux-agent-status` sends a desktop notification when a Claude Code or
 opencode agent is waiting for you, finishes, or stops with an error, for
 example "Claude Code: notes › zsh finished". It skips the notification when
 that pane is already in front of you, and when Claude reports an idle prompt
