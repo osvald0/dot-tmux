@@ -142,7 +142,22 @@ A pane whose agent has not reported an ID yet restores with `claude --continue`,
 at least one hook or event after setup before their IDs can be saved.
 Submitting a prompt is sufficient.
 
+## Notifications
+
+`tmux-claude-status` sends a desktop notification when a Claude Code or
+opencode agent is waiting for you, finishes, or stops with an error, for
+example "Claude Code: notes › zsh finished". It skips the notification when
+that pane is already in front of you, and when Claude reports an idle prompt
+right after finishing.
+
+Agents' own terminal notifications do not get through tmux, so the helper
+writes the notification escape sequence (OSC 777) straight to the terminal
+running the tmux client. Ghostty shows it as a macOS notification, but only
+while Ghostty is not the focused app. Codex is skipped because it already posts
+its own notifications through its desktop app.
+
 ## Terminal integration
 
 Extended keys are enabled so Shift+Enter reaches Claude Code as a newline, and
-passthrough is enabled so agent desktop notifications reach the outer terminal.
+passthrough is enabled so programs inside tmux can send escape sequences to
+the outer terminal.
