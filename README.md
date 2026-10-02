@@ -40,16 +40,29 @@ tmux source-file ~/.tmux.conf
 
 ## Status bar
 
-The bar uses Catppuccin Mocha. Each tab is a number block and a name block:
+The bar uses Catppuccin Mocha:
 
-- The number block's color shows the agent state in that window: blue while
-  working, yellow while waiting for input, green when done, red on error, and
-  gray when there is no agent or it is idle.
-- The current tab's name block is white with dark bold text.
-- The session name sits on a mauve block on the right and turns red while the
-  prefix is active.
+```
+ █ 0 █ claude █  █ 1 █ zsh █  █ 2 █ nvim █                           █ dotfiles █
+```
 
-A finished agent's state resets once its pane gets focus.
+Each tab is a number block followed by a name block. The current tab's name
+block is white with dark bold text, and the others are dark gray. The session
+name sits on a mauve block on the right and turns red while the prefix is
+active.
+
+The number block's color shows the state of the agent in that window:
+
+| Color | State | Meaning |
+| --- | --- | --- |
+| Blue `#89b4fa` | working | The agent is running a prompt or a tool |
+| Yellow `#f9e2af` | waiting | The agent needs you: a permission prompt or a question |
+| Green `#a6e3a1` | done | The agent finished. Resets to idle once you focus its pane |
+| Red `#f38ba8` | error | The turn failed |
+| Gray `#9399b2` | idle or none | The agent is ready for a prompt, or no agent is running |
+
+The session list (`prefix s`) and the agent picker (`prefix a`) show the same
+states as a colored dot next to each window and pane.
 
 ## Agent status
 
