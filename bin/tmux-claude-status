@@ -4,13 +4,33 @@ set -euo pipefail
 
 status=${1:-}
 
-if [[ -z ${TMUX:-} || -z ${TMUX_PANE:-} ]]; then
-  exit 0
+session_id=
+transcript_path=
+cwd=
+if [[ ! -t 0 ]] && command -v jq >/dev/null 2>&1; then
+  { read -r session_id; read -r transcript_path; read -r cwd; } < <(
+    jq -r '.session_id // "", .transcript_path // "", .cwd // ""' 2>/dev/null || true
+  ) || true
 fi
 
-session_id=
-if [[ ! -t 0 ]] && command -v jq >/dev/null 2>&1; then
-  session_id=$(jq -r '.session_id // empty' 2>/dev/null || true)
+# Codex runs hooks from a shared app-server daemon, so TMUX_PANE is whatever pane
+# started the daemon. Find the Codex pane instead: the one already tagged with
+# this session, else the most recently active Codex pane in the same directory.
+if [[ $transcript_path == "$HOME/.codex/"* ]]; then
+  TMUX_PANE=$(
+    tmux list-panes -a -F $'#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{@claude_session_id}\t#{window_activity}' 2>/dev/null |
+      awk -F '\t' -v sid="$session_id" -v cwd="$cwd" '
+        $2 != "codex" { next }
+        sid != "" && $4 == sid { exact = $1 }
+        $3 == cwd && $4 == "" && $5 > fresh_at { fresh_at = $5; fresh = $1 }
+        $3 == cwd && $5 > any_at { any_at = $5; any = $1 }
+        END { print exact ? exact : fresh ? fresh : any }
+      '
+  ) || true
+fi
+
+if [[ -z ${TMUX_PANE:-} ]] || ! tmux display-message -p -t "$TMUX_PANE" '' >/dev/null 2>&1; then
+  exit 0
 fi
 
 # Claude Code and Codex use UUIDs, opencode uses ses_ ids
@@ -23,7 +43,7 @@ case $status in
     icon=''
     ;;
   working)
-    icon='#[fg=#89dceb] 󰔟'
+    icon='#[fg=#89b4fa] 󰔟'
     ;;
   waiting)
     icon='#[fg=#f9e2af] '

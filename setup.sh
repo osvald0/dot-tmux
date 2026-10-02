@@ -11,7 +11,7 @@ catppuccin_version=v2.3.1
 local_bin=$HOME/.local/bin
 
 command -v jq >/dev/null 2>&1 || {
-  printf 'jq is required to persist Claude Code sessions.\n' >&2
+  printf 'jq is required to install agent hooks and persist agent sessions.\n' >&2
   exit 1
 }
 
@@ -27,10 +27,48 @@ printf 'Linked %s to %s\n' "$config_target" "$config_source"
 mkdir -p "$local_bin"
 ln -sfn "$repo_root/bin/tmux-claude-status" "$local_bin/tmux-claude-status"
 ln -sfn "$repo_root/bin/tmux-resurrect-claude-save" "$local_bin/tmux-resurrect-claude-save"
+ln -sfn "$repo_root/bin/tmux-agent-next" "$local_bin/tmux-agent-next"
+
+# Merges an agent's hooks from agents/ into its config file. Hook groups that
+# call tmux-claude-status are replaced, and every other setting is kept.
+merge_agent_hooks() {
+  local source=$1 target=$2 merged created=
+
+  mkdir -p "$(dirname "$target")"
+  if [[ ! -s $target ]]; then
+    printf '{}\n' > "$target"
+    created=1
+  fi
+
+  # Leave the file untouched when our hooks already match, so tools that track
+  # hooks by position (Codex trusts each one by index) do not ask again
+  local ours='{hooks: ((.hooks // {}) | with_entries(.value |= map(select(any(.hooks[]?; .command | test("tmux-claude-status"))))) | with_entries(select(.value | length > 0)))}'
+  if [[ $(jq -S "$ours" "$target") == "$(jq -S . "$source")" ]]; then
+    return
+  fi
+
+  merged=$(jq --slurpfile ours "$source" '
+    .hooks = (
+      (.hooks // {})
+      | with_entries(.value |= map(select(any(.hooks[]?; .command | test("tmux-claude-status")) | not)))
+      | with_entries(select(.value | length > 0))
+    )
+    | reduce ($ours[0].hooks | to_entries[]) as $event (.; .hooks[$event.key] += $event.value)
+  ' "$target")
+
+  if [[ $merged != "$(jq . "$target")" ]]; then
+    [[ -n $created ]] || cp -p "$target" "$target.backup-$(date +%Y%m%d-%H%M%S)"
+    printf '%s\n' "$merged" > "$target"
+    printf 'Updated agent hooks in %s\n' "$target"
+  fi
+}
+
+merge_agent_hooks "$repo_root/agents/claude/hooks.json" "$HOME/.claude/settings.json"
+merge_agent_hooks "$repo_root/agents/codex/hooks.json" "$HOME/.codex/hooks.json"
 
 opencode_plugins=$HOME/.config/opencode/plugins
 mkdir -p "$opencode_plugins"
-ln -sfn "$repo_root/opencode/tmux-agent-status.js" "$opencode_plugins/tmux-agent-status.js"
+ln -sfn "$repo_root/agents/opencode/tmux-agent-status.js" "$opencode_plugins/tmux-agent-status.js"
 
 if [[ ! -d $tpm_root/.git ]]; then
   command -v git >/dev/null 2>&1 || {

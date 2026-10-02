@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+# Switches to the next agent pane that needs attention: waiting agents first,
+# then done ones. Repeated presses cycle through them in session order.
+
+set -euo pipefail
+
+current=$(tmux display-message -p '#{pane_id}')
+panes=$(tmux list-panes -a -F '#{pane_id} #{@claude_status}')
+
+for state in waiting done; do
+  targets=$(awk -v state="$state" '$2 == state { print $1 }' <<< "$panes")
+  [[ -z $targets ]] && continue
+
+  # Pick the first matching pane after the current one, wrapping around
+  target=$(awk -v current="$current" '
+    { ids[NR] = $1; if ($1 == current) pos = NR }
+    END { print (pos && pos < NR) ? ids[pos + 1] : ids[1] }
+  ' <<< "$targets")
+
+  if [[ $target != "$current" || $(wc -l <<< "$targets") -gt 1 ]]; then
+    tmux switch-client -t "$target"
+    exit 0
+  fi
+done
+
+tmux display-message 'No agents need you'
