@@ -39,24 +39,10 @@ if [[ $session_id =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:
 fi
 
 case $status in
-  ready)
-    icon=''
-    ;;
-  working)
-    icon='#[fg=#89b4fa] 󰔟'
-    ;;
-  waiting)
-    icon='#[fg=#f9e2af] '
-    ;;
-  done)
-    icon='#[fg=#a6e3a1] '
-    ;;
-  error)
-    icon='#[fg=#f38ba8] '
+  ready|working|waiting|done|error)
     ;;
   clear)
     tmux set-option -pqu -t "$TMUX_PANE" @agent_status
-    tmux set-option -pqu -t "$TMUX_PANE" @agent_status_icon
     tmux set-option -pqu -t "$TMUX_PANE" @agent_session_id
     tmux refresh-client -S 2>/dev/null || true
     exit 0
@@ -71,7 +57,7 @@ esac
 # Agents' own terminal notifications do not get through tmux, so this writes the
 # escape sequence straight to the client's tty instead of to the pane.
 notify() {
-  local agent=$1 message=$2 where window client_tty flags client_pane
+  local agent=$1 message=$2 where window client_tty flags client_pane first_tty=
 
   window=$(tmux display-message -p -t "$TMUX_PANE" '#{window_name}')
   # Claude's process, and so its automatic window name, is its version number
@@ -79,23 +65,22 @@ notify() {
   where="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}') › $window"
 
   while IFS=$'\t' read -r client_tty flags client_pane; do
+    [[ -n $first_tty ]] || first_tty=$client_tty
     # Skip when the pane is already in front of you
     if [[ $client_pane == "$TMUX_PANE" && ,$flags, == *,focused,* ]]; then
       return
     fi
   done < <(tmux list-clients -F $'#{client_tty}\t#{client_flags}\t#{pane_id}' 2>/dev/null)
 
-  client_tty=$(tmux list-clients -F '#{client_tty}' 2>/dev/null | head -n 1)
-  [[ -w $client_tty ]] || return 0
+  [[ -w $first_tty ]] || return 0
 
   # OSC 777 separates fields with semicolons, so keep them out of the text
-  printf '\e]777;notify;%s;%s\e\\' "${agent//;/,}" "${where//;/,} ${message//;/,}" > "$client_tty"
+  printf '\e]777;notify;%s;%s\e\\' "${agent//;/,}" "${where//;/,} ${message//;/,}" > "$first_tty"
 }
 
 previous=$(tmux show-options -pqv -t "$TMUX_PANE" @agent_status)
 
 tmux set-option -pq -t "$TMUX_PANE" @agent_status "$status"
-tmux set-option -pq -t "$TMUX_PANE" @agent_status_icon "$icon"
 
 tmux refresh-client -S 2>/dev/null || true
 

@@ -1,12 +1,11 @@
 # tmux Setup
 
-This is my personal tmux configuration. It lives in this repository so I can
-keep it versioned and reuse it across machines. It is tuned for running coding
-agents (Claude Code, Codex, and opencode) in many sessions at once.
+Personal tmux configuration for running Claude Code, Codex, and opencode
+across multiple sessions.
 
 ## Setup
 
-Run the setup script from anywhere:
+Requires tmux, Git, and `jq`. Run from the repository:
 
 ```sh
 ./setup.sh
@@ -17,19 +16,15 @@ The script:
 - links `tmux.conf` to `~/.tmux.conf` (an existing regular file is backed up
   with a timestamp first)
 - links the helpers in `bin/` into `~/.local/bin`
-- merges the Claude Code and Codex hooks from `agents/` into
-  `~/.claude/settings.json` and `~/.codex/hooks.json` (see
-  [Agent status](#agent-status))
+- merges the Claude Code and Codex hooks into their configuration files
 - links the opencode plugin into `~/.config/opencode/plugins`
 - installs TPM and the configured plugins
 - installs the Catppuccin theme into `~/.config/tmux/plugins/catppuccin/tmux`
   (outside TPM, because its repository name clashes with other themes)
 
-Git is required to install TPM and Catppuccin, and `jq` is required to install
-the agent hooks and persist agent sessions.
-
-The script is safe to run again. It only rewrites an agent config when its hooks
-differ from the ones in `agents/`, and it backs that file up first.
+Setup preserves unrelated settings and hooks, including commands in shared
+hook groups. It backs up existing agent configs before changing them and
+leaves matching configs untouched when run again.
 
 After setting it up, start a new tmux server or reload the configuration from an
 existing session:
@@ -59,7 +54,7 @@ The number block's color shows the state of the agent in that window:
 | Yellow `#f9e2af` | waiting | The agent needs you: a permission prompt or a question |
 | Green `#a6e3a1` | done | The agent finished. Resets to idle once you focus its pane |
 | Red `#f38ba8` | error | The turn failed |
-| Gray `#9399b2` | idle or none | The agent is ready for a prompt, or no agent is running |
+| Gray `#9399b2` | ready or none | The agent is ready for a prompt, or no agent is running |
 
 The session list (`prefix s`) and the agent picker (`prefix a`) show the same
 states as a colored dot next to each window and pane.
@@ -76,10 +71,9 @@ Each agent calls it from the integration in `agents/`:
 | Codex | `agents/codex/hooks.json` | `~/.codex/hooks.json` (merged) |
 | opencode | `agents/opencode/tmux-agent-status.js` | `~/.config/opencode/plugins` (linked) |
 
-The hook files hold only this repository's hooks. Setup merges them into each
-agent's config: hook groups that call `tmux-agent-status` are replaced, and
-every other setting and hook (permissions, plugins, other tools' hooks) is kept.
-Codex asks you to trust new or changed hooks the next time it starts.
+Setup replaces this repository's hook commands, including their old
+`tmux-claude-status` name. Codex asks you to trust new or changed hooks
+the next time it starts.
 
 Hooks pass the state as the first argument and the hook's JSON on stdin, which
 is where the session ID comes from:
@@ -113,8 +107,6 @@ directory.
 | `Option+Shift+Arrow` | Resize the current pane |
 | `prefix G` | Lazygit in a popup |
 
-In the tree views, state is shown as a dot in the same colors as the tabs.
-
 ## Session persistence
 
 Save the current tmux environment with `prefix + Ctrl-s`. Restore the most
@@ -127,9 +119,7 @@ manual. Continuum skips autosaving while another tmux server is running, so a
 leftover server (for example one started with a different `TMUX_TMPDIR`) turns
 it off until that server exits.
 
-Each agent's session ID is stored on its pane, so saving records an exact
-resume command and several conversations in the same directory restore
-independently:
+Saved session IDs let conversations in the same directory restore independently:
 
 | Agent | Restored with |
 | --- | --- |
@@ -138,9 +128,8 @@ independently:
 | opencode | `opencode --session <id>` |
 
 A pane whose agent has not reported an ID yet restores with `claude --continue`,
-`codex resume --last`, or `opencode --continue`. Existing sessions must trigger
-at least one hook or event after setup before their IDs can be saved.
-Submitting a prompt is sufficient.
+`codex resume --last`, or `opencode --continue`. Submit a prompt in existing
+agent sessions after setup so their IDs can be saved.
 
 ## Notifications
 

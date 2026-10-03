@@ -18,7 +18,7 @@ for state in waiting done; do
     END { print (pos && pos < NR) ? ids[pos + 1] : ids[1] }
   ' <<< "$targets")
 
-  if [[ $target != "$current" || $(wc -l <<< "$targets") -gt 1 ]]; then
+  if [[ $target != "$current" ]]; then
     tmux switch-client -t "$target"
     exit 0
   fi
