@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+# Sorts a session's windows by name, ignoring case, and keeps the current
+# window selected. Takes the session as its only argument.
+
+set -euo pipefail
+
+session=${1:-}
+active=$(tmux display-message -p -t "$session" '#{window_id}')
+index=$(tmux show-options -gv base-index)
+
+# Close gaps in the window numbers so every swap target exists. All the moves
+# go in one tmux call, so a sort started by a hook never interleaves with another.
+commands=(move-window -r -t "$session")
+while read -r window; do
+  commands+=(';' swap-window -d -s "$window" -t "$session:$index")
+  index=$((index + 1))
+done < <(tmux list-windows -t "$session" -F '#{window_name}	#{window_id}' | sort -f -s -t '	' -k1,1 | cut -f2)
+commands+=(';' select-window -t "$active")
+
+tmux "${commands[@]}"

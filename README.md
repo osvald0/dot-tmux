@@ -38,13 +38,23 @@ tmux source-file ~/.tmux.conf
 The bar uses Catppuccin Mocha:
 
 ```
- █ 0 █ claude █  █ 1 █ zsh █  █ 2 █ nvim █                           █ dotfiles █
+ █ dotfiles █  █ 0 █ claude █  █ 1 █ zsh █              █ CPU █ 27% █  █ MEM █ 64% █
 ```
 
 Each tab is a number block followed by a name block. The current tab's name
 block is white with dark bold text, and the others are dark gray. The session
-name sits on a mauve block on the right and turns red while the prefix is
+name sits on a mauve block left of the tabs and turns red while the prefix is
 active.
+
+Tabs stay sorted by name, ignoring case. They are sorted again whenever a tab
+opens or its name changes. A tab you have not renamed shows its running
+command, except Claude Code tabs, which show the session title (for example
+`APP-22 Home pull to`) cut to 20 characters.
+
+CPU and memory usage sit on the right, refreshed every 5 seconds
+by [tmux-cpu](https://github.com/tmux-plugins/tmux-cpu). Each label block is
+gray below 50%, yellow from 50%, and red from 80%. Memory counts app, wired,
+and compressed memory, so it reads close to Activity Monitor's "Memory Used".
 
 The number block's color shows the state of the agent in that window:
 
@@ -102,6 +112,7 @@ directory.
 | `prefix s` | Session list, with agent state dots when a session is expanded |
 | `prefix L` | Switch to the last session |
 | `prefix c` | New window in the current directory |
+| `prefix O` | Sort the current session's tabs by name (also happens automatically) |
 | `prefix \|` / `prefix -` | Split horizontally or vertically in the current directory |
 | `prefix h/j/k/l` | Move between panes |
 | `Option+Shift+Arrow` | Resize the current pane |
