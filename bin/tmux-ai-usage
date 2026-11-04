@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+
+# Shows Claude and Codex (ChatGPT plan) usage in a tmux popup.
+
+set -uo pipefail
+
+cache_dir=${XDG_CACHE_HOME:-$HOME/.cache}/tmux-ai-usage
+fresh_seconds=60
+
+mkdir -p "$cache_dir"
+
+file_age() {
+  local modified
+  modified=$(stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null) || {
+    printf '%s\n' 999999
+    return
+  }
+  printf '%s\n' $(($(date +%s) - modified))
+}
+
+fetch_claude() {
+  local token
+  token=$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null |
+    jq -r '.claudeAiOauth.accessToken // empty') || return 1
+  [[ -n $token ]] || return 1
+  curl -fsS -m 10 https://api.anthropic.com/api/oauth/usage \
+    -H "Authorization: Bearer $token" \
+    -H 'anthropic-beta: oauth-2025-04-20'
+}
+
+fetch_codex() {
+  local auth=$HOME/.codex/auth.json token account
+  [[ -r $auth ]] || return 1
+  token=$(jq -r '.tokens.access_token // empty' "$auth")
+  account=$(jq -r '.tokens.account_id // empty' "$auth")
+  [[ -n $token ]] || return 1
+  curl -fsS -m 10 https://chatgpt.com/backend-api/wham/usage \
+    -H "Authorization: Bearer $token" \
+    -H "ChatGPT-Account-Id: $account" \
+    -H 'User-Agent: codex-cli'
+}
+
+refresh() {
+  local provider response
+  for provider in claude codex; do
+    response=$("fetch_$provider" 2>/dev/null) || continue
+    jq -e . >/dev/null 2>&1 <<<"$response" || continue
+    printf '%s\n' "$response" > "$cache_dir/$provider.json"
+  done
+}
+
+# Fields are split by the unit separator because read merges empty tab-separated fields.
+rows_claude() {
+  jq -r '
+    def epoch: sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601;
+    def money: (. / 100 | floor | tostring | if length > 3 then .[:-3] + "," + .[-3:] else . end) | "$" + .;
+    . as $usage
+    | ([ {label: "5 hour", window: .five_hour}, {label: "Weekly", window: .seven_day} ]
+       | map(select(.window.utilization != null))) as $windows
+    | if ($windows | length) > 0 then
+        $windows[] | [ .label, (.window.utilization | floor), "",
+          (.window.resets_at | if . then epoch else "" end) ]
+      elif $usage.spend.enabled == true then
+        [ "Spend", ($usage.spend.percent | floor),
+          "\($usage.spend.used.amount_minor | money) of \($usage.spend.limit.amount_minor | money)", "" ]
+      else empty end
+    | map(tostring) | join("\u001f")
+  ' "$cache_dir/claude.json"
+}
+
+rows_codex() {
+  jq -r '
+    def window_name:
+      if . == 604800 then "Weekly"
+      elif . % 86400 == 0 then "\(. / 86400) day"
+      else "\(. / 3600 | floor) hour" end;
+    .rate_limit.primary_window, .rate_limit.secondary_window
+    | select(. != null)
+    | [ (.limit_window_seconds | window_name), (.used_percent | floor), "", .reset_at ]
+    | map(tostring) | join("\u001f")
+  ' "$cache_dir/codex.json"
+}
+
+read -r gray yellow red green subtext < <(
+  tmux display-message -p '#{@thm_overlay_2} #{@thm_yellow} #{@thm_red} #{@thm_green} #{@thm_subtext_0}'
+)
+
+ansi() {
+  local hex=${1#\#}
+  [[ ${#hex} -eq 6 ]] || return
+  printf '\033[38;2;%d;%d;%dm' "0x${hex:0:2}" "0x${hex:2:2}" "0x${hex:4:2}"
+}
+
+bold=$'\033[1m'
+reset=$'\033[0m'
+dim=$(ansi "$subtext")
+
+until_reset() {
+  local seconds=$(($1 - $(date +%s)))
+  if ((seconds <= 0)); then
+    printf 'resets now'
+  elif ((seconds >= 86400)); then
+    printf 'resets in %dd %dh' $((seconds / 86400)) $((seconds % 86400 / 3600))
+  elif ((seconds >= 3600)); then
+    printf 'resets in %dh %dm' $((seconds / 3600)) $((seconds % 3600 / 60))
+  else
+    printf 'resets in %dm' $((seconds / 60))
+  fi
+}
+
+# Same thresholds as the CPU and memory blocks: yellow from 50%, red from 80%
+print_row() {
+  local label=$1 percent=$2 detail=$3 resets=$4 color=$green filled cell used= left=
+  if ((percent >= 80)); then
+    color=$red
+  elif ((percent >= 50)); then
+    color=$yellow
+  fi
+  filled=$(((percent + 5) / 10))
+  ((filled > 10)) && filled=10
+  for ((cell = 0; cell < 10; cell++)); do
+    if ((cell < filled)); then used+='━'; else left+='━'; fi
+  done
+  [[ -n $resets ]] && detail=$(until_reset "$resets")
+  printf '  %-8s %s%s%s%s%s %3d%%  %s%s%s\n' \
+    "$label" "$(ansi "$color")" "$used" "$(ansi "$gray")" "$left" "$reset" "$percent" "$dim" "$detail" "$reset"
+}
+
+render() {
+  local provider name cache age printed=
+  clear
+  for provider in claude codex; do
+    cache=$cache_dir/$provider.json
+    [[ -s $cache ]] || continue
+    name=$([[ $provider == claude ]] && echo Claude || echo Codex)
+    age=$(file_age "$cache")
+    printf '\n %s%s%s' "$bold" "$name" "$reset"
+    if ((age >= 300)); then
+      printf '  %s(from %d min ago)%s' "$(ansi "$gray")" $((age / 60)) "$reset"
+    fi
+    printf '\n'
+    while IFS=$'\x1f' read -r label percent detail resets; do
+      print_row "$label" "$percent" "$detail" "$resets"
+    done < <("rows_$provider")
+    printed=1
+  done
+  [[ -n $printed ]] || printf '\n  No usage yet. Sign in to Claude Code or Codex.\n'
+  printf '\n %sr refresh · any key closes%s' "$dim" "$reset"
+}
+
+stale=
+for provider in claude codex; do
+  [[ $(file_age "$cache_dir/$provider.json") -lt $fresh_seconds ]] || stale=1
+done
+if [[ -n $stale ]]; then
+  printf '\n  Loading usage...'
+  refresh
+fi
+
+while true; do
+  render
+  IFS= read -rsn1 key || break
+  [[ $key == r ]] || break
+  printf '\r %sRefreshing...%s              ' "$dim" "$reset"
+  refresh
+done

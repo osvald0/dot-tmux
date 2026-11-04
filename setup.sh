@@ -25,7 +25,7 @@ ln -sfn "$config_source" "$config_target"
 printf 'Linked %s to %s\n' "$config_target" "$config_source"
 
 mkdir -p "$local_bin"
-for helper in tmux-agent-status tmux-resurrect-agent-save tmux-agent-next tmux-sort-windows; do
+for helper in tmux-agent-status tmux-resurrect-agent-save tmux-agent-next tmux-sort-windows tmux-ai-usage; do
   ln -sfn "$repo_root/bin/$helper" "$local_bin/$helper"
 done
 

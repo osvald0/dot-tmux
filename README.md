@@ -117,6 +117,33 @@ directory.
 | `prefix h/j/k/l` | Move between panes |
 | `Option+Shift+Arrow` | Resize the current pane |
 | `prefix G` | Lazygit in a popup |
+| `prefix v` | Claude and Codex usage in a popup |
+
+## AI usage
+
+`prefix v` opens a popup with Claude and Codex usage:
+
+```
+ Claude
+  Spend    ━━━━━━━━━━  17%  $436 of $2,500
+
+ Codex
+  5 hour   ━━━━━━━━━━   3%  resets in 4h 42m
+  Weekly   ━━━━━━━━━━  65%  resets in 8h 40m
+```
+
+The used part of each bar is in color and the rest is gray.
+
+Claude shows its 5 hour and weekly limits, or the month's usage credit spend
+for accounts billed that way. Codex shows its limits on the ChatGPT plan. Bars
+turn yellow from 50% and red from 80%. Press `r` to refresh, or any other key
+to close.
+
+`tmux-ai-usage` reads the logins Claude Code and Codex already keep (the
+`Claude Code-credentials` Keychain item and `~/.codex/auth.json`) and caches
+results in `~/.cache/tmux-ai-usage` for a minute. A failed request shows the
+last numbers with their age, which usually means that tool's login expired
+until you open it again.
 
 ## Session persistence
 
