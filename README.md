@@ -126,6 +126,7 @@ directory.
 ```
  Claude
   Spend    ━━━━━━━━━━  17%  $436 of $2,500
+  Today    $12.90  (UTC)
 
  Codex
   5 hour   ━━━━━━━━━━   3%  resets in 4h 42m
@@ -144,6 +145,27 @@ to close.
 results in `~/.cache/tmux-ai-usage` for a minute. A failed request shows the
 last numbers with their age, which usually means that tool's login expired
 until you open it again.
+
+For Enterprise accounts with the daily spend chart in Settings > Usage, the
+popup can also show today's reported spend across Claude products. It uses
+UTC dates to match that chart. These reported totals can lag behind current
+activity.
+
+The daily spend endpoint requires a Claude web session, separate from the
+Claude Code login. In your signed-in browser, open Developer Tools >
+Application > Cookies > `https://claude.ai` and copy the `sessionKey` value.
+Run this command and paste it at the hidden prompt:
+
+```sh
+tmux-ai-usage --connect-claude
+```
+
+The session is saved in macOS Keychain under `tmux-ai-usage-claude-web`.
+The organization comes from the Claude Code login in `~/.claude.json`;
+use the same account in the browser. Open the popup and press `r` to fetch
+today's spend. Repeat the connection step when the web session expires.
+Failed requests keep the last total with its age, and yesterday's cached
+total is never shown as today's spend.
 
 ## Session persistence
 

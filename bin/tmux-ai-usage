@@ -9,6 +9,22 @@ fresh_seconds=60
 
 mkdir -p "$cache_dir"
 
+if [[ ${1:-} == --connect-claude ]]; then
+  printf 'Paste your Claude web sessionKey (input is hidden): '
+  IFS= read -rs session
+  printf '\n'
+
+  if [[ $session != sk-ant-* ]]; then
+    printf 'Invalid Claude session key.\n' >&2
+    exit 1
+  fi
+
+  security add-generic-password -U -a tmux-ai-usage -s tmux-ai-usage-claude-web -w "$session" || exit 1
+  unset session
+  printf 'Claude web session saved in Keychain.\n'
+  exit 0
+fi
+
 file_age() {
   local modified
   modified=$(stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null) || {
@@ -40,13 +56,58 @@ fetch_codex() {
     -H 'User-Agent: codex-cli'
 }
 
+fetch_claude_daily() {
+  local session organization today response
+  session=$(security find-generic-password -a tmux-ai-usage -s tmux-ai-usage-claude-web -w 2>/dev/null) || return 1
+  organization=$(jq -er '.oauthAccount.organizationUuid // empty' "$HOME/.claude.json" 2>/dev/null) || return 1
+  [[ $session == sk-ant-* && $organization =~ ^[a-fA-F0-9-]{36}$ ]] || return 1
+  today=$(date -u +%F)
+
+  response=$(printf 'Cookie: sessionKey=%s\n' "$session" |
+    curl -fsS -m 10 -H @- \
+      "https://api.anthropic.com/api/organizations/$organization/usage/spend?start_date=$today&end_date=$today&group_by=product_surface&granularity=daily") || return 1
+
+  jq -e --arg today "$today" '
+    .start_date == $today and .end_date == $today and
+    .currency == "usd" and (.series | type) == "array" and
+    all(.series[]; (.bucket | type) == "string" and
+      (.cost_minor_units | type) == "number" and .cost_minor_units >= 0)
+  ' >/dev/null <<<"$response" || return 1
+
+  printf '%s\n' "$response"
+}
+
 refresh() {
   local provider response
-  for provider in claude codex; do
+  for provider in claude codex claude_daily; do
     response=$("fetch_$provider" 2>/dev/null) || continue
     jq -e . >/dev/null 2>&1 <<<"$response" || continue
     printf '%s\n' "$response" > "$cache_dir/$provider.json"
   done
+}
+
+print_claude_daily() {
+  local cache=$cache_dir/claude_daily.json today amount age detail
+  [[ -s $cache ]] || return
+  today=$(date -u +%F)
+
+  amount=$(jq -er --arg today "$today" '
+    select(.start_date == $today and .end_date == $today and .currency == "usd")
+    | [.series[] | select(.bucket == $today) | .cost_minor_units]
+    | add // 0
+    | . / 100
+  ' "$cache" 2>/dev/null) || {
+    printf '  Today    %sunavailable (UTC)%s\n' "$dim" "$reset"
+    return
+  }
+
+  age=$(file_age "$cache")
+  detail=UTC
+  if ((age >= 300)); then
+    detail="UTC, from $((age / 60)) min ago"
+  fi
+
+  printf '  Today    $%.2f  %s(%s)%s\n' "$amount" "$dim" "$detail" "$reset"
 }
 
 # Fields are split by the unit separator because read merges empty tab-separated fields.
@@ -142,6 +203,9 @@ render() {
     while IFS=$'\x1f' read -r label percent detail resets; do
       print_row "$label" "$percent" "$detail" "$resets"
     done < <("rows_$provider")
+    if [[ $provider == claude ]]; then
+      print_claude_daily
+    fi
     printed=1
   done
   [[ -n $printed ]] || printf '\n  No usage yet. Sign in to Claude Code or Codex.\n'
@@ -149,7 +213,8 @@ render() {
 }
 
 stale=
-for provider in claude codex; do
+for provider in claude codex claude_daily; do
+  [[ $provider == claude_daily && ! -s $cache_dir/claude_daily.json ]] && continue
   [[ $(file_age "$cache_dir/$provider.json") -lt $fresh_seconds ]] || stale=1
 done
 if [[ -n $stale ]]; then
