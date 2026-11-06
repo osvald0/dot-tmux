@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+
+# Shows CPU, memory, and disk usage in a tmux popup, refreshing until a key is pressed.
+# With --status, prints a status bar block for each one at 80% or more.
+
+set -uo pipefail
+
+# Pads and cuts names by character, since bash 3.2's printf counts bytes
+LC_CTYPE=en_US.UTF-8
+
+refresh_seconds=1
+alert_percent=80
+agent_limit=5
+process_limit=3
+
+# Rows are label, percent, and detail, split by the unit separator.
+cpu_row() {
+  local idle
+
+  idle=$(iostat -n0 -c 2 -w 1 2>/dev/null | awk 'NR > 2 { idle = $3 } END { print idle }')
+  [[ $idle =~ ^[0-9]+$ ]] || return
+
+  sysctl -n vm.loadavg hw.ncpu 2>/dev/null | awk -v used=$((100 - idle)) '
+    NR == 1 { load = $2 }
+    NR == 2 { printf "CPU\037%d\037load %.1f on %d cores\n", used, load, $1 }
+  '
+}
+
+# Matches Activity Monitor's Memory Used: app memory, wired, and compressed.
+memory_row() {
+  vm_stat 2>/dev/null | awk -v total="$(sysctl -n hw.memsize 2>/dev/null)" '
+    /page size of/ { page = $8 }
+    /^Anonymous pages/ { pages += $3 }
+    /^Pages purgeable/ { pages -= $3 }
+    /^Pages wired down/ { pages += $4 }
+    /^Pages occupied by compressor/ { pages += $5 }
+    END {
+      if (page == 0 || total == 0) exit 1
+      used = pages * page
+      gib = 1024 ^ 3
+      printf "Memory\037%d\037%.1f of %d GB\n", used * 100 / total, used / gib, total / gib
+    }
+  '
+}
+
+# APFS volumes share one container, so used space is the container size minus what is free.
+disk_row() {
+  df -k / 2>/dev/null | awk '
+    NR == 2 { size = $2 * 1024; free = $4 * 1024 }
+    END {
+      if (size == 0) exit 1
+      printf "Disk\037%d\037%.1f GB free of %d GB\n", (size - free) * 100 / size, free / 1e9, size / 1e9
+    }
+  '
+}
+
+usage_rows() {
+  cpu_row
+  memory_row
+  disk_row
+}
+
+process_snapshot() {
+  ps -Ac -o pid=,ppid=,pcpu=,rss=,comm= 2>/dev/null
+}
+
+top_processes() {
+  local sort_column=$1 snapshot=$2
+
+  awk '{
+    name = $5
+    for (field = 6; field <= NF; field++) name = name " " $field
+    printf "%s\037%s\037%s\n", name, $3, $4
+  }' <<<"$snapshot" | sort -t $'\x1f' -k "$sort_column" -rn | head -n "$process_limit"
+}
+
+# Each agent pane counts its whole process tree, so tools and servers it started are included.
+agent_usage() {
+  local snapshot=$1 panes
+
+  panes=$(tmux list-panes -a -f '#{!=:#{@agent_status},}' \
+    -F '#{pane_pid}'$'\x1f''#{session_name} › #{window_name}' 2>/dev/null)
+  [[ -n $panes ]] || return
+
+  awk -F $'\x1f' '
+    function add_tree(pid,    kids, count, kid) {
+      cpu_sum += cpu[pid]
+      rss_sum += rss[pid]
+      count = split(children[pid], kids, " ")
+      for (kid = 1; kid <= count; kid++) add_tree(kids[kid])
+    }
+
+    FNR == NR {
+      pane_count++
+      pane_pid[pane_count] = $1
+      pane_label[pane_count] = $2
+      next
+    }
+
+    {
+      split($0, field, " ")
+      cpu[field[1]] = field[3]
+      rss[field[1]] = field[4]
+      children[field[2]] = children[field[2]] " " field[1]
+    }
+
+    END {
+      for (pane = 1; pane <= pane_count; pane++) {
+        cpu_sum = 0
+        rss_sum = 0
+        add_tree(pane_pid[pane])
+        printf "%s\037%.1f\037%d\n", pane_label[pane], cpu_sum, rss_sum
+      }
+    }
+  ' <(printf '%s\n' "$panes") <(printf '%s\n' "$snapshot") |
+    sort -t $'\x1f' -k 2 -rn | head -n "$agent_limit"
+}
+
+print_status() {
+  local crust red subtext surface label percent
+
+  crust=$(tmux show -gv @thm_crust)
+  red=$(tmux show -gv @thm_red)
+  subtext=$(tmux show -gv @thm_subtext_0)
+  surface=$(tmux show -gv @thm_surface_0)
+
+  while IFS=$'\x1f' read -r label percent _; do
+    [[ -n $label ]] || continue
+    ((percent >= alert_percent)) || continue
+    printf '#[fg=%s,bg=%s,bold] %s #[fg=%s,bg=%s,nobold] %d%% #[default] ' \
+      "$crust" "$red" "$label" "$subtext" "$surface" "$percent"
+  done <<<"$(usage_rows)"
+}
+
+if [[ ${1:-} == --status ]]; then
+  print_status
+  exit 0
+fi
+
+read -r gray yellow red green subtext < <(
+  tmux display-message -p '#{@thm_overlay_2} #{@thm_yellow} #{@thm_red} #{@thm_green} #{@thm_subtext_0}'
+)
+
+ansi() {
+  local hex=${1#\#}
+  [[ ${#hex} -eq 6 ]] || return
+  printf '\033[38;2;%d;%d;%dm' "0x${hex:0:2}" "0x${hex:2:2}" "0x${hex:4:2}"
+}
+
+bold=$'\033[1m'
+reset=$'\033[0m'
+clear_line=$'\033[K'
+dim=$(ansi "$subtext")
+
+# Same thresholds as tmux-ai-usage: yellow from 50%, red from 80%
+print_row() {
+  local label=$1 percent=$2 detail=$3 color=$green filled cell used= left=
+
+  if ((percent >= alert_percent)); then
+    color=$red
+  elif ((percent >= 50)); then
+    color=$yellow
+  fi
+
+  filled=$(((percent + 5) / 10))
+  ((filled > 10)) && filled=10
+  for ((cell = 0; cell < 10; cell++)); do
+    if ((cell < filled)); then used+='━'; else left+='━'; fi
+  done
+
+  printf '  %-8s %s%s%s%s%s %3d%%  %s%s%s%s\n' \
+    "$label" "$(ansi "$color")" "$used" "$(ansi "$gray")" "$left" "$reset" "$percent" "$dim" "$detail" "$reset" "$clear_line"
+}
+
+fit() {
+  local text=${1:0:$2}
+  printf '%s%*s' "$text" $(($2 - ${#text})) ''
+}
+
+print_section() {
+  local title=$1 rows=$2 name cpu kb
+
+  [[ -n $rows ]] || return
+
+  printf '%s\n %s%s%s%s%5s  %8s%s%s\n' \
+    "$clear_line" "$bold" "$(fit "$title" 32)" "$reset" "$dim" CPU Memory "$reset" "$clear_line"
+  while IFS=$'\x1f' read -r name cpu kb; do
+    printf '  %s %4.0f%%  %8s%s\n' "$(fit "$name" 30)" "$cpu" "$(format_kb "$kb")" "$clear_line"
+  done <<<"$rows"
+}
+
+format_kb() {
+  awk -v kb="$1" 'BEGIN {
+    if (kb >= 1024 * 1024) printf "%.1f GB", kb / 1024 / 1024
+    else printf "%d MB", kb / 1024
+  }'
+}
+
+render() {
+  local snapshot
+
+  printf '%s\n' "$clear_line"
+  while IFS=$'\x1f' read -r label percent detail; do
+    [[ -n $label ]] || continue
+    print_row "$label" "$percent" "$detail"
+  done <<<"$(usage_rows)"
+
+  snapshot=$(process_snapshot)
+  print_section Agents "$(agent_usage "$snapshot")"
+  print_section 'Top CPU' "$(top_processes 2 "$snapshot")"
+  print_section 'Top memory' "$(top_processes 3 "$snapshot")"
+
+  printf '%s\n %slive · any key closes%s%s' "$clear_line" "$dim" "$reset" "$clear_line"
+}
+
+printf '\033[?25l\n  Loading...'
+trap 'printf "\033[?25h"' EXIT
+
+while true; do
+  # Drawing a finished frame over the last one avoids the blink of clearing first
+  frame=$(render)
+  printf '\033[H%s\033[J' "$frame"
+
+  IFS= read -rsn1 -t "$refresh_seconds" key && break
+
+  # Bash 3.2 returns the same status for a timeout and end of input
+  [[ -t 0 ]] || break
+done

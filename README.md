@@ -38,23 +38,19 @@ tmux source-file ~/.tmux.conf
 The bar uses Catppuccin Mocha:
 
 ```
- █ dotfiles █  █ 0 █ claude █  █ 1 █ zsh █              █ CPU █ 27% █  █ MEM █ 64% █
+ █ dotfiles █  █ 0 █ claude █  █ 1 █ zsh █                          █ Disk █ 89% █
 ```
 
 Each tab is a number block followed by a name block. The current tab's name
 block is white with dark bold text, and the others are dark gray. The session
 name sits on a mauve block left of the tabs and turns red while the prefix is
-active.
+active. The right side stays empty unless CPU, memory, or disk reaches 80%
+(see [System usage](#system-usage)).
 
 Tabs stay sorted by name, ignoring case. They are sorted again whenever a tab
 opens or its name changes. A tab you have not renamed shows its running
 command, except Claude Code tabs, which show the session title (for example
 `APP-22 Home pull to`) cut to 20 characters.
-
-CPU and memory usage sit on the right, refreshed every 5 seconds
-by [tmux-cpu](https://github.com/tmux-plugins/tmux-cpu). Each label block is
-gray below 50%, yellow from 50%, and red from 80%. Memory counts app, wired,
-and compressed memory, so it reads close to Activity Monitor's "Memory Used".
 
 The number block's color shows the state of the agent in that window:
 
@@ -118,6 +114,7 @@ directory.
 | `Option+Shift+Arrow` | Resize the current pane |
 | `prefix G` | Lazygit in a popup |
 | `prefix v` | Claude and Codex usage in a popup |
+| `prefix S` | CPU, memory, and disk usage in a popup |
 
 ## AI usage
 
@@ -166,6 +163,46 @@ use the same account in the browser. Open the popup and press `r` to fetch
 today's spend. Repeat the connection step when the web session expires.
 Failed requests keep the last total with its age, and yesterday's cached
 total is never shown as today's spend.
+
+## System usage
+
+`prefix S` opens a popup with CPU, memory, and disk usage, the agents using
+the most, and the heaviest processes:
+
+```
+  CPU      ━━━━━━━━━━  25%  load 7.7 on 14 cores
+  Memory   ━━━━━━━━━━  73%  35.5 of 48 GB
+  Disk     ━━━━━━━━━━  89%  54.2 GB free of 494 GB
+
+ Agents                            CPU    Memory
+  api › PRs 12 to 18                5%    593 MB
+  docs › changelog                  1%    386 MB
+
+ Top CPU                           CPU    Memory
+  PerfPowerServices                77%     29 MB
+  MyApp                            34%    561 MB
+
+ Top memory                        CPU    Memory
+  mds_stores                        0%    1.9 GB
+  Figma Helper (Renderer)           3%    1.1 GB
+```
+
+Bars use the same colors as the AI usage popup: green, yellow from 50%, and
+red from 80%. The numbers refresh every couple of seconds until you press any
+key. Memory counts app, wired, and compressed memory, so it reads close to
+Activity Monitor's "Memory Used". Disk covers the startup volume's whole
+APFS container. Finder can report more free space because it also counts
+purgeable files.
+
+Agents lists up to five panes running an agent (the same panes as `prefix a`),
+busiest first. Each one adds up the whole process tree started in that pane,
+so tools, test runners, and dev servers the agent launched count toward it.
+CPU in the lists is a percentage of one core, as in Activity Monitor, so a
+busy process can pass 100%.
+
+The status bar stays empty on the right until CPU, memory, or disk reaches
+80%. That one then appears as a red block, for example `Disk 89%`, and leaves
+once it drops below.
 
 ## Session persistence
 

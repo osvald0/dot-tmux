@@ -169,7 +169,7 @@ until_reset() {
   fi
 }
 
-# Same thresholds as the CPU and memory blocks: yellow from 50%, red from 80%
+# Same thresholds as tmux-system-usage: yellow from 50%, red from 80%
 print_row() {
   local label=$1 percent=$2 detail=$3 resets=$4 color=$green filled cell used= left=
   if ((percent >= 80)); then
