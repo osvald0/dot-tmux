@@ -133,7 +133,7 @@ directory.
 | --- | --- |
 | `prefix a` | Agent picker: every pane running an agent, across all sessions |
 | `prefix Space` | Jump to the next waiting agent, or else a finished one |
-| `prefix r` | Delivery runs menu (`runs menu` from agent-skills), waiting first; press a number to jump to that run's pane |
+| `prefix r` | Delivery runs table in a popup sized to it (`runs popup` from agent-skills), waiting first; type a number to jump to that run's pane, `o` and a number to open its PR |
 | `prefix s` | Session list, with agent state dots when a session is expanded |
 | `prefix L` | Switch to the last session |
 | `prefix c` | New window in the current directory |
