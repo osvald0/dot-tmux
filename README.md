@@ -97,8 +97,9 @@ phase, and how many other runs are waiting on you.
 
 ## Agent status
 
-`tmux-agent-status` stores an agent's state on its pane, which drives the tab
-colors, the picker, and session restore. The helper does nothing outside tmux.
+`tmux-agent-status` stores an agent's state on its pane, with the time it last
+changed, which drives the tab colors, the picker, session restore, and the
+session rows in agent-skills' `runs`. The helper does nothing outside tmux.
 Each agent calls it from the integration in `agents/`:
 
 | Agent | Integration | Installed into |
@@ -135,7 +136,7 @@ directory.
 | --- | --- |
 | `prefix a` | Agent picker: every pane running an agent, across all sessions |
 | `prefix Space` | Jump to the next waiting agent, or else a finished one |
-| `prefix r` | Delivery runs table in a popup sized to it (`runs popup` from agent-skills), waiting first; type a number to jump to that run's pane, `o` and a number to open its PR |
+| `prefix r` | Delivery runs and every other agent session in a popup sized to it (`runs popup` from agent-skills), waiting first; type a number to jump to that pane, `o` and a number to open a run's PR |
 | `prefix s` | Session list, with agent state dots when a session is expanded |
 | `prefix L` | Switch to the last session |
 | `prefix c` | New window in the current directory |
