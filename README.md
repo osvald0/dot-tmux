@@ -44,8 +44,10 @@ The bar uses Catppuccin Mocha:
 Each tab is a number block followed by a name block. The current tab's name
 block is white with dark bold text, and the others are dark gray. The session
 name sits on a mauve block left of the tabs and turns red while the prefix is
-active. The right side stays empty unless CPU, memory, or disk reaches 80%
-(see [System usage](#system-usage)).
+active. The right side stays empty unless delivery runs are waiting on you or
+CPU, memory, or disk reaches 80% (see [System usage](#system-usage)). Waiting
+runs show as a yellow block, for example `Runs 2 waiting`, when agent-skills'
+`runs` is in `~/.local/bin`; `prefix r` lists them.
 
 Tabs stay sorted by name, ignoring case. They are sorted again whenever a tab
 opens or its name changes. A tab you have not renamed shows its running
