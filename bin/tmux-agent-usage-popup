@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+# Shows the tokens and cost of the agents in one tmux window, in a popup.
+# Usage: tmux-agent-usage-popup <window-id>
+
+set -uo pipefail
+
+target=${1:-}
+
+read -r subtext < <(tmux display-message -p '#{@thm_subtext_0}' 2>/dev/null)
+
+ansi() {
+  local hex=${1#\#}
+  [[ ${#hex} -eq 6 ]] || return
+  printf '\033[38;2;%d;%d;%dm' "0x${hex:0:2}" "0x${hex:2:2}" "0x${hex:4:2}"
+}
+
+bold=$'\033[1m'
+reset=$'\033[0m'
+dim=$(ansi "${subtext:-}")
+
+# @agent_usage looks like "9.2M (8.8M cached) · ~$3.10 · 19%": tokens, then
+# cost, then the Codex 5 hour limit
+print_agent() {
+  local agent=$1 usage=$2
+  awk -v agent="$agent" -v usage="$usage" -v bold="$bold" -v dim="$dim" -v reset="$reset" '
+    BEGIN {
+      count = split(usage, part, " · ")
+      split(part[1], tokens, " ")
+      cached = part[1]
+      gsub(/[()]|cached/, "", cached)
+      sub(/^[^ ]* +/, "", cached)
+      sub(/ +$/, "", cached)
+      for (i = 2; i <= count; i++) {
+        if (part[i] ~ /\$/) cost = part[i]
+        else limit = part[i]
+      }
+      printf "\n %s%s%s\n", bold, agent, reset
+      if (cost != "") printf "  %-9s %s%s%s\n", "Cost", bold, cost, reset
+      printf "  %-9s %s\n", "Tokens", tokens[1]
+      printf "  %-9s %s\n", "Cached", cached
+      if (limit != "") printf "  %-9s %s\n", "5h limit", limit
+    }'
+}
+
+clear
+printed=
+while IFS=$'\t' read -r command usage; do
+  [[ -n $usage ]] || continue
+  # Claude's process is named after its version number
+  [[ $command =~ ^[0-9.]+$ ]] && command=claude
+  print_agent "$command" "$usage"
+  printed=1
+done < <(tmux list-panes -t "$target" -F $'#{pane_current_command}\t#{@agent_usage}' 2>/dev/null)
+
+[[ -n $printed ]] || printf '\n  No agent usage in this tab yet.\n'
+if [[ $printed ]] && tmux list-panes -t "$target" -F '#{@agent_usage}' 2>/dev/null | grep -q '~\$'; then
+  printf '\n %s~ estimate at API prices%s\n' "$dim" "$reset"
+fi
+printf '\n %sany key closes%s' "$dim" "$reset"
+read -rsn1 _ || true

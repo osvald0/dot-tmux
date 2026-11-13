@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+
+# Prints one agent session's token use and cost, like "9.2M (8.8M cached) · ~$3.10 · 19%".
+# Usage: tmux-agent-usage <transcript> [claude-cost-usd]
+
+set -uo pipefail
+
+transcript=${1:-}
+claude_cost=${2:-}
+
+[[ -r $transcript ]] || exit 0
+
+# Codex on a ChatGPT plan has no per-session bill, so its cost is an estimate at
+# OpenAI API list prices (USD per million tokens). Unknown models show no cost.
+codex_prices() {
+  case $1 in
+    gpt-6.1-sol) echo '2 0.10 10' ;;
+  esac
+}
+
+codex_usage() {
+  local usage model prices
+  usage=$(grep '"type":"token_count"' "$transcript" | tail -1 | jq -r '
+    .payload as $p
+    | ($p.info.total_token_usage // empty) as $u
+    | [$u.total_tokens, $u.cached_input_tokens, $u.input_tokens, $u.output_tokens,
+       ($p.rate_limits.primary.used_percent // "")]
+    | map(tostring) | join(" ")
+  ' 2>/dev/null)
+  [[ -n $usage ]] || return
+
+  model=$(grep -o '"model":"[^"]*"' "$transcript" | tail -1 | cut -d'"' -f4)
+  prices=$(codex_prices "$model")
+
+  awk -v usage="$usage" -v prices="$prices" "$format_awk"'
+    BEGIN {
+      split(usage, u, " ")
+      line = tokens(u[1], u[2])
+      if (prices != "") {
+        split(prices, p, " ")
+        cost = ((u[3] - u[2]) * p[1] + u[2] * p[2] + u[4] * p[3]) / 1e6
+        line = line sprintf(" · ~$%.2f", cost)
+      }
+      if (u[5] != "") line = line sprintf(" · %d%%", u[5])
+      print line
+    }'
+}
+
+# Claude writes each assistant message once per content block, so usage is
+# counted once per message id. Subagent transcripts sit next to the session's.
+claude_usage() {
+  local subagents=${transcript%.jsonl}/subagents
+  local files=("$transcript")
+  [[ -d $subagents ]] && files+=("$subagents"/*.jsonl)
+
+  jq -r '
+    select(.type == "assistant" and .message.usage)
+    | .message.id as $id | .message.usage
+    | [$id, (.input_tokens // 0) + (.cache_creation_input_tokens // 0)
+        + (.cache_read_input_tokens // 0) + (.output_tokens // 0),
+       (.cache_read_input_tokens // 0)]
+    | @tsv
+  ' "${files[@]}" 2>/dev/null |
+    awk -F '\t' -v cost="$claude_cost" "$format_awk"'
+      !seen[$1]++ { total += $2; cached += $3 }
+      END {
+        if (total == 0) exit
+        line = tokens(total, cached)
+        if (cost != "") line = line sprintf(" · $%.2f", cost)
+        print line
+      }'
+}
+
+format_awk='
+function short(n) {
+  if (n >= 1e9) return sprintf("%.1fB", n / 1e9)
+  if (n >= 1e6) return sprintf("%.1fM", n / 1e6)
+  if (n >= 1e3) return sprintf("%.0fk", n / 1e3)
+  return sprintf("%d", n)
+}
+function tokens(total, cached) {
+  return short(total) " (" short(cached) " cached)"
+}
+'
+
+if [[ $transcript == "$HOME/.codex/"* || $transcript == */rollout-*.jsonl ]]; then
+  codex_usage
+else
+  claude_usage
+fi

@@ -44,6 +44,7 @@ case $status in
   clear)
     tmux set-option -pqu -t "$TMUX_PANE" @agent_status
     tmux set-option -pqu -t "$TMUX_PANE" @agent_session_id
+    tmux set-option -pqu -t "$TMUX_PANE" @agent_usage
     tmux refresh-client -S 2>/dev/null || true
     exit 0
     ;;
@@ -81,6 +82,12 @@ notify() {
 previous=$(tmux show-options -pqv -t "$TMUX_PANE" @agent_status)
 
 tmux set-option -pq -t "$TMUX_PANE" @agent_status "$status"
+
+# Claude's statusLine stores its usage, since only it knows the session cost
+if [[ $transcript_path == "$HOME/.codex/"* ]]; then
+  tmux set-option -pq -t "$TMUX_PANE" @agent_usage \
+    "$("$(dirname "${BASH_SOURCE[0]}")/tmux-agent-usage" "$transcript_path")"
+fi
 
 tmux refresh-client -S 2>/dev/null || true
 

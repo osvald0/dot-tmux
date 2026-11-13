@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+# Claude Code statusLine command: shows the session's tokens and cost, and stores
+# them on the pane so the tmux tab shows them too. When the agent-skills `runs`
+# tool is installed, it also shows this session's delivery run and how many other
+# runs are waiting on you.
+
+set -uo pipefail
+
+input=$(cat)
+IFS=$'\t' read -r transcript cost < <(jq -r '[.transcript_path // "", .cost.total_cost_usd // ""] | @tsv' <<<"$input")
+session=$(jq -r '.session_id // ""' <<<"$input")
+
+usage=$("$(dirname "${BASH_SOURCE[0]}")/tmux-agent-usage" "$transcript" "$cost")
+
+if [[ -n ${TMUX_PANE:-} ]]; then
+  tmux set-option -pq -t "$TMUX_PANE" @agent_usage "$usage" 2>/dev/null
+fi
+
+runs_line=""
+if [[ -n $session && -x $HOME/.local/bin/runs ]]; then
+  runs_line=$("$HOME/.local/bin/runs" line "$session" 2>/dev/null)
+fi
+
+if [[ -n $runs_line ]]; then
+  printf '%s · %s\n' "$usage" "$runs_line"
+else
+  printf '%s\n' "$usage"
+fi

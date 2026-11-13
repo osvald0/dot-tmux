@@ -65,6 +65,34 @@ The number block's color shows the state of the agent in that window:
 The session list (`prefix s`) and the agent picker (`prefix a`) show the same
 states as a colored dot next to each window and pane.
 
+### Tab tokens and cost
+
+`prefix T` opens a popup with the tokens and cost of the agents in the current
+tab:
+
+```
+ claude
+  Cost      $4.69
+  Tokens    10.5M
+  Cached    10.3M
+```
+
+Tokens counts every token, including cached input. Cached is the cached input,
+which is billed at a fraction of the price.
+
+| Agent | Cost | Stored on the pane by |
+| --- | --- | --- |
+| Claude Code | Claude's own `cost.total_cost_usd`, at API list prices | `tmux-claude-statusline`, Claude's statusLine, which also shows the line under the prompt |
+| Codex | An estimate (`~`) at OpenAI API list prices, since a ChatGPT plan has no per-session bill. The percentage is the plan's 5 hour limit | `tmux-agent-status`, on every Codex hook |
+
+`tmux-agent-usage` reads the session log for both, and
+`tmux-agent-usage-popup` draws the popup. Claude tokens include subagents.
+Codex prices live in `codex_prices` in `tmux-agent-usage`, and a model it does
+not list shows tokens without a cost. Setup adds the statusLine only when
+`~/.claude/settings.json` has none. When agent-skills' `runs` is in
+`~/.local/bin`, the statusLine also shows the session's delivery run and its
+phase, and how many other runs are waiting on you.
+
 ## Agent status
 
 `tmux-agent-status` stores an agent's state on its pane, which drives the tab
@@ -105,6 +133,7 @@ directory.
 | --- | --- |
 | `prefix a` | Agent picker: every pane running an agent, across all sessions |
 | `prefix Space` | Jump to the next waiting agent, or else a finished one |
+| `prefix r` | Delivery runs menu (`runs menu` from agent-skills), waiting first; press a number to jump to that run's pane |
 | `prefix s` | Session list, with agent state dots when a session is expanded |
 | `prefix L` | Switch to the last session |
 | `prefix c` | New window in the current directory |
@@ -115,6 +144,7 @@ directory.
 | `prefix G` | Lazygit in a popup |
 | `prefix v` | Claude and Codex usage in a popup |
 | `prefix S` | CPU, memory, and disk usage in a popup |
+| `prefix T` | Tokens and cost of the agents in the current tab, in a popup |
 
 ## AI usage
 

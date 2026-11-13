@@ -25,7 +25,7 @@ ln -sfn "$config_source" "$config_target"
 printf 'Linked %s to %s\n' "$config_target" "$config_source"
 
 mkdir -p "$local_bin"
-for helper in tmux-agent-status tmux-resurrect-agent-save tmux-agent-next tmux-sort-windows tmux-ai-usage tmux-system-usage; do
+for helper in tmux-agent-status tmux-resurrect-agent-save tmux-agent-next tmux-sort-windows tmux-ai-usage tmux-system-usage tmux-agent-usage tmux-agent-usage-popup tmux-claude-statusline; do
   ln -sfn "$repo_root/bin/$helper" "$local_bin/$helper"
 done
 
@@ -70,6 +70,16 @@ merge_agent_hooks() {
 
 merge_agent_hooks "$repo_root/agents/claude/hooks.json" "$HOME/.claude/settings.json"
 merge_agent_hooks "$repo_root/agents/codex/hooks.json" "$HOME/.codex/hooks.json"
+
+# Claude only gives the session cost to its statusLine, so it shows tokens and
+# cost there. An existing statusLine is kept.
+claude_settings=$HOME/.claude/settings.json
+if ! jq -e '.statusLine' "$claude_settings" >/dev/null 2>&1; then
+  cp -p "$claude_settings" "$claude_settings.backup-$(date +%Y%m%d-%H%M%S)"
+  jq '.statusLine = {type: "command", command: "$HOME/.local/bin/tmux-claude-statusline"}' "$claude_settings" > "$claude_settings.tmp" &&
+    mv "$claude_settings.tmp" "$claude_settings"
+  printf 'Added the tmux-claude-statusline statusLine to %s\n' "$claude_settings"
+fi
 
 opencode_plugins=$HOME/.config/opencode/plugins
 mkdir -p "$opencode_plugins"
