@@ -5,7 +5,7 @@ across multiple sessions.
 
 ## Setup
 
-Requires tmux, Git, and `jq`. Run from the repository:
+Requires tmux, Git, `jq`, and `uv` (`tmux-agent-logs` declares its Python dependencies inline). Run from the repository:
 
 ```sh
 ./setup.sh
@@ -137,6 +137,8 @@ directory.
 | `prefix a` | Agent picker: every pane running an agent, across all sessions |
 | `prefix Space` | Jump to the next waiting agent, or else a finished one |
 | `prefix r` | Delivery runs and every other agent session in a popup sized to it (`runs popup` from agent-skills), waiting first; type a number to jump to that pane, `o` and a number to open a run's PR |
+| `prefix e` | Follow the current agent pane's session in a split beside it, focus stays on the agent (`tmux-agent-logs`): its transcript with tool output, plus subagent transcripts and background command output for Claude Code. Markdown renders with clickable links and file paths, and JSON (or a Python dict or list) is colored and indented when it does not fit on one line. In the logs pane: `a` all, `m` main, `s` subagents, `b` background, `n`/`p` one source at a time, `r` tool results on or off, `j` long JSON in full or cut short, `q` quit. Press `prefix e` again, in the agent pane or the logs pane, to close them |
+| `prefix W` | The same logs in a new window; `prefix e` or `q` inside it closes it |
 | `prefix s` | Session list, with agent state dots when a session is expanded |
 | `prefix L` | Switch to the last session |
 | `prefix c` | New window in the current directory |

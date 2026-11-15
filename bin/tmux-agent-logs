@@ -1,0 +1,1037 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["rich>=14,<15"]
+# ///
+"""Follow everything a Claude Code or Codex session writes, beside it or in its own window.
+
+  tmux-agent-logs open [pane]           follow the pane's session in a split beside it (dot-tmux prefix e)
+  tmux-agent-logs open --window [pane]  follow it in a new window (dot-tmux prefix W)
+
+Run open again from the agent pane, or from the logs pane itself, and it closes the logs instead.
+  tmux-agent-logs follow <session id>   follow it in this terminal
+
+Follows the session transcript with full tool output and, for Claude Code, every subagent
+transcript and background command output, tagged by source. Markdown renders with clickable
+links and file paths. The session comes from the @agent_session_id that dot-tmux stores on
+each agent pane.
+
+Keys: a all, m main, s subagents, b background commands, n and p one source at a time,
+r tool results on or off, j long JSON in full or cut short, q quit.
+"""
+
+import argparse
+import ast
+import glob
+import io
+import json
+import os
+import re
+import select
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import termios
+import textwrap
+import time
+import tty
+from collections import deque
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from markdown_it import MarkdownIt
+from rich.console import Console
+from rich.markdown import Heading, Markdown
+from rich.theme import Theme
+
+POLL_SECONDS = 0.5
+BACKLOG_BYTES = 48 * 1024
+BUFFER_ITEMS = 5000
+REDRAW_ITEMS = 1500
+RESULT_LINES = 12
+OUTPUT_JSON_LINES = 24
+STRUCTURED_CANDIDATES = 6
+JSON_BLOCK_LINES = 2000
+JSON_BLOCK_SECONDS = 1.0
+TEXT_CHARS = 4000
+GUTTER = 24
+MIN_TEXT_WIDTH = 40
+
+RESET = "\033[0m"
+DIM = "\033[2m"
+BOLD = "\033[1m"
+NORMAL_WEIGHT = "\033[22m"
+UNDERLINE = "\033[4m"
+NO_UNDERLINE = "\033[24m"
+CODE = "\033[36m"
+DEFAULT_COLOR = "\033[39m"
+RED = "\033[31m"
+MAIN_COLOR = "\033[1;37m"
+EVENT_COLOR = "\033[35m"
+JSON_KEY = "\033[36m"
+JSON_STRING = "\033[32m"
+JSON_NUMBER = "\033[33m"
+JSON_LITERAL = "\033[35m"
+JSON_TOKEN = re.compile(
+    r'(?P<key>"(?:\\.|[^"\\])*")(?=\s*:)'
+    r'|(?P<string>"(?:\\.|[^"\\])*")'
+    r"|(?P<number>-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)"
+    r"|(?P<literal>\btrue\b|\bfalse\b|\bnull\b)"
+)
+JSON_OPENING = re.compile(r"[\[{][\[{\s]*$")
+STATUS_COLORS = {"completed": "\033[32m", "failed": RED, "killed": RED, "stopped": "\033[33m"}
+UNREPORTED_PREFIXES = ("This agent has not reported yet", "This agent's report was delivered")
+HANDBACK_PREFIX = "[Subagent hand-back]"
+AGENT_MESSAGE = re.compile(r'<agent-message from="([^"]+)">\n?(.*?)</agent-message>', re.DOTALL)
+COMMAND_OUTPUT_TAGS = ("bash-stdout", "bash-stderr", "local-command-stdout")
+TASK_NOTIFICATION = re.compile(r"<task-notification>(.*?)</task-notification>", re.DOTALL)
+SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
+TAG_COLORS = ("\033[36m", "\033[35m", "\033[33m", "\033[32m", "\033[34m")
+CLEAR_SCREEN = "\033[2J\033[3J\033[H"
+
+TOOL_SUMMARY_KEYS = ("description", "command", "cmd", "file_path", "path", "pattern", "url", "prompt", "skill")
+KIND_LABELS = {"main": "main transcript", "agent": "subagents", "bash": "background commands"}
+KEY_MODES = {"a": "all", "m": "main", "s": "agent", "b": "bash"}
+
+ESCAPES = re.compile(r"\033\]8;[^\033]*\033\\|\033\[[0-9;]*m")
+URL = re.compile(r"https?://[^\s<>()\"'`\033]+[^\s<>()\"'`\033.,;:!?]")
+BARE_URL = re.compile(r"(?<![(<\[\w/])(https?://[^\s<>()\[\]\"'`]+[^\s<>()\[\]\"'`.,;:!?])")
+CODE_SPAN = re.compile(r"(`[^`\n]+`)")
+TASK_ITEM = re.compile(r"^(\s*[-*+]\s+)\[([ xX])\]\s+")
+FENCE_MARKERS = ("```", "~~~")
+TRAILING_BLANK = re.compile(r"(?:\s|\033\[[0-9;]*m)+$")
+MARKDOWN_THEME = Theme(
+    {
+        "markdown.code": "cyan",
+        "markdown.h1": "bold underline",
+        "markdown.h2": "bold underline",
+        "markdown.h3": "bold",
+        "markdown.h4": "bold italic",
+        "markdown.h5": "italic",
+        "markdown.h6": "dim italic",
+        "markdown.link": "underline",
+        "markdown.block_quote": "dim",
+        "markdown.hr": "dim",
+    }
+)
+
+
+def bracket_depth(text):
+    opened = text.count("{") + text.count("[")
+    closed = text.count("}") + text.count("]")
+    return opened - closed
+
+
+@dataclass
+class JsonCollector:
+    prefix: str = ""
+    lines: list = field(default_factory=list)
+    depth: int = 0
+    updated: float = 0.0
+
+    def add(self, line):
+        if self.lines:
+            return self.extend(line)
+
+        opening = JSON_OPENING.search(line)
+        if not opening or bracket_depth(line) <= 0:
+            return [line]
+
+        self.prefix = line[: opening.start()]
+        self.lines = [line[opening.start() :]]
+        self.depth = bracket_depth(line)
+        self.updated = time.monotonic()
+        return []
+
+    def extend(self, line):
+        self.lines.append(line)
+        self.depth += bracket_depth(line)
+        self.updated = time.monotonic()
+        if self.depth > 0 and len(self.lines) < JSON_BLOCK_LINES:
+            return []
+
+        return self.flush()
+
+    def flush(self):
+        if not self.lines:
+            return []
+
+        prefix, lines = self.prefix, self.lines
+        self.prefix, self.lines, self.depth = "", [], 0
+        value = load_structured("\n".join(lines))
+        if value is None:
+            return [prefix + lines[0], *lines[1:]]
+
+        return [prefix + json.dumps(value, ensure_ascii=False, default=str)]
+
+    def is_stale(self):
+        return bool(self.lines) and time.monotonic() - self.updated > JSON_BLOCK_SECONDS
+
+
+@dataclass
+class Source:
+    file_path: str
+    tag: str
+    kind: str
+    color: str
+    offset: int = 0
+    pending: str = ""
+    collector: JsonCollector = field(default_factory=JsonCollector)
+
+    def read_backlog(self):
+        self.offset = max(0, os.path.getsize(self.file_path) - BACKLOG_BYTES)
+        starts_mid_line = self.offset > 0
+        lines = self.read_lines()
+        if starts_mid_line:
+            return lines[1:]
+
+        return lines
+
+    def read_lines(self):
+        try:
+            with open(self.file_path, encoding="utf-8", errors="replace") as file:
+                file.seek(self.offset)
+                chunk = file.read()
+                self.offset = file.tell()
+        except OSError:
+            return []
+
+        lines = (self.pending + chunk).split("\n")
+        self.pending = lines.pop()
+        return lines
+
+
+@dataclass
+class Item:
+    source: Source
+    stamp: str
+    role: str
+    text: str
+    is_error: bool = False
+    rendered: tuple | None = None
+
+
+@dataclass
+class Filter:
+    mode: str = "all"
+    selected: int = 0
+    show_results: bool = True
+    expand_json: bool = False
+
+
+@dataclass
+class Viewer:
+    session_id: str
+    transcript: str | None
+    tasks_dir: str | None
+    sources: dict = field(default_factory=dict)
+    items: deque = field(default_factory=lambda: deque(maxlen=BUFFER_ITEMS))
+    filter: Filter = field(default_factory=Filter)
+    needs_redraw: bool = False
+
+
+def tmux(*args):
+    return subprocess.run(["tmux", *args], capture_output=True, text=True).stdout.strip()
+
+
+def fail(message):
+    if os.environ.get("TMUX"):
+        tmux("display-message", f"tmux-agent-logs: {message}")
+    sys.exit(f"tmux-agent-logs: {message}")
+
+
+def open_logs_panes(pane):
+    listing = tmux("list-panes", "-a", "-F", "#{pane_id} #{@logs_for}")
+    return [line.split()[0] for line in listing.splitlines() if line.endswith(f" {pane}")]
+
+
+def toggle_logs(pane, in_window):
+    if tmux("display-message", "-p", "-t", pane, "#{@logs_for}"):
+        tmux("kill-pane", "-t", pane)
+        return
+
+    existing = open_logs_panes(pane)
+    if existing:
+        for logs_pane in existing:
+            tmux("kill-pane", "-t", logs_pane)
+        return
+
+    session_id = tmux("display-message", "-p", "-t", pane, "#{@agent_session_id}")
+    if not session_id:
+        fail("this pane has no agent session")
+
+    pane_path = tmux("display-message", "-p", "-t", pane, "#{pane_current_path}")
+    command = f"{shlex.quote(os.path.abspath(__file__))} follow {shlex.quote(session_id)}"
+    if in_window:
+        logs_pane = tmux("new-window", "-P", "-F", "#{pane_id}", "-n", f"logs {session_id[:8]}", "-c", pane_path, command)
+    else:
+        logs_pane = tmux("split-window", "-P", "-F", "#{pane_id}", "-h", "-d", "-l", "45%", "-t", pane, "-c", pane_path, command)
+
+    tmux("set-option", "-p", "-t", logs_pane, "@logs_for", pane)
+
+
+def find_transcript(session_id):
+    patterns = (
+        f"~/.claude/projects/*/{session_id}.jsonl",
+        f"~/.codex/sessions/*/*/*/rollout-*-{session_id}.jsonl",
+    )
+    for pattern in patterns:
+        matches = glob.glob(os.path.expanduser(pattern))
+        if matches:
+            return matches[0]
+
+    return None
+
+
+def find_tasks_dir(session_id):
+    roots = [f"/private/tmp/claude-{os.getuid()}", os.environ.get("CLAUDE_CODE_TMPDIR", "")]
+    for root in filter(None, roots):
+        matches = glob.glob(os.path.join(root, "*", session_id, "tasks"))
+        if matches:
+            return matches[0]
+
+    return None
+
+
+def visible_width(text):
+    return len(ESCAPES.sub("", text))
+
+
+def text_width():
+    return max(MIN_TEXT_WIDTH, shutil.get_terminal_size().columns - GUTTER)
+
+
+def hyperlink(label, target):
+    unbreakable = label.replace(" ", " ")
+    return f"\033]8;;{target}\033\\{UNDERLINE}{unbreakable}{NO_UNDERLINE}\033]8;;\033\\"
+
+
+def file_target(text):
+    candidate = os.path.abspath(os.path.expanduser(text.split(":")[0].strip()))
+    if "/" in text and os.path.exists(candidate):
+        return f"file://{candidate}"
+
+    return None
+
+
+def linkify(text):
+    return URL.sub(lambda match: hyperlink(match[0], match[0]), text)
+
+
+def wrap(styled, width, hanging=""):
+    body = styled.lstrip(" ")
+    lines, current = [], ""
+    for word in body.split(" "):
+        candidate = f"{current} {word}" if current else word
+        if current and visible_width(candidate) > width:
+            lines.append(current)
+            current = hanging + word
+            continue
+
+        current = candidate
+
+    lines.append(current)
+    lines[0] = styled[: len(styled) - len(body)] + lines[0]
+    return lines
+
+
+class LeftHeading(Heading):
+    def __rich_console__(self, console, options):
+        self.text.justify = "left"
+        yield self.text
+
+
+class LogMarkdown(Markdown):
+    elements = {**Markdown.elements, "heading_open": LeftHeading}
+
+    def __init__(self, markup, **options):
+        super().__init__(markup, **options)
+        parser = MarkdownIt().enable("strikethrough").enable("table")
+        parser.validateLink = lambda url: not url.lower().startswith(("javascript:", "vbscript:", "data:"))
+        self.parsed = parser.parse(markup)
+
+
+def check_box(match):
+    box = "☑" if match[2] in "xX" else "☐"
+    return f"{match[1]}{box} "
+
+
+def link_code_span(span, before):
+    target = file_target(span.strip("`"))
+    if not target or before.endswith("["):
+        return span
+
+    return f"[{span}]({target})"
+
+
+def prepare_line(line):
+    parts = CODE_SPAN.split(TASK_ITEM.sub(check_box, line))
+    prepared = []
+    for index, part in enumerate(parts):
+        if index % 2:
+            prepared.append(link_code_span(part, prepared[-1]))
+        else:
+            prepared.append(BARE_URL.sub(r"<\1>", part))
+
+    return "".join(prepared)
+
+
+def prepare_markdown(text):
+    prepared, in_fence = [], False
+    for line in text.splitlines():
+        if line.strip().startswith(FENCE_MARKERS):
+            in_fence = not in_fence
+            prepared.append(line)
+            continue
+
+        prepared.append(line if in_fence else prepare_line(line))
+
+    return "\n".join(prepared)
+
+
+def render_markdown(text, width):
+    buffer = io.StringIO()
+    console = Console(file=buffer, width=width, force_terminal=True, color_system="truecolor", theme=MARKDOWN_THEME)
+    console.print(LogMarkdown(prepare_markdown(text), code_theme="ansi_dark", hyperlinks=True))
+    return [TRAILING_BLANK.sub("", line) for line in buffer.getvalue().rstrip("\n").split("\n")]
+
+
+def render_plain(text, width):
+    lines = []
+    for line in text.splitlines() or [""]:
+        lines.extend(wrap(linkify(line), width))
+
+    return lines
+
+
+def load_structured(fragment):
+    try:
+        value = json.loads(fragment)
+    except ValueError:
+        try:
+            value = ast.literal_eval(fragment)
+        except (ValueError, SyntaxError, MemoryError, RecursionError):
+            return None
+
+    if isinstance(value, (dict, list)) and value:
+        return value
+
+    return None
+
+
+def find_structured(line):
+    stripped = line.strip()
+    if not stripped.endswith(("}", "]")):
+        return None
+
+    starts = [index for index, char in enumerate(stripped) if char in "{["][:STRUCTURED_CANDIDATES]
+    for start in starts:
+        value = load_structured(stripped[start:])
+        if value is not None:
+            return stripped[:start], value
+
+    return None
+
+
+def color_json_token(match):
+    if match["key"]:
+        return f"{JSON_KEY}{match['key']}{DEFAULT_COLOR}"
+
+    if match["string"]:
+        return f"{JSON_STRING}{linkify(match['string'])}{DEFAULT_COLOR}"
+
+    if match["number"]:
+        return f"{JSON_NUMBER}{match['number']}{DEFAULT_COLOR}"
+
+    return f"{JSON_LITERAL}{match['literal']}{DEFAULT_COLOR}"
+
+
+def colorize_json(text):
+    return JSON_TOKEN.sub(color_json_token, text)
+
+
+def render_structured(prefix, value, width, max_lines):
+    compact = json.dumps(value, ensure_ascii=False, default=str)
+    if len(prefix) + len(compact) <= width:
+        return [linkify(prefix) + colorize_json(compact)]
+
+    pretty = json.dumps(value, ensure_ascii=False, indent=2, default=str).splitlines()
+    limit = max_lines or len(pretty)
+    shown = [colorize_json(truncate(line, width)) for line in pretty[:limit]]
+    shown[0] = linkify(prefix) + shown[0]
+    hidden = len(pretty) - limit
+    if hidden > 0:
+        shown.append(f"{DIM}… {hidden} more lines{RESET}")
+
+    return shown
+
+
+def render_output_line(line, width, max_lines):
+    structured = find_structured(line)
+    if structured:
+        return render_structured(*structured, width, max_lines)
+
+    return wrap(linkify(line), width)
+
+
+def join_json_blocks(text):
+    collector = JsonCollector()
+    joined = [output for line in text.splitlines() for output in collector.add(line)]
+    return joined + collector.flush()
+
+
+def result_lines(text, width):
+    lines = []
+    has_json = False
+    for line in join_json_blocks(text):
+        structured = find_structured(line)
+        if structured:
+            lines.extend(render_structured(*structured, width, None))
+            has_json = True
+        else:
+            lines.append(linkify(truncate(line, width)))
+
+    return lines, has_json
+
+
+def json_line_limit(expand, default):
+    if expand:
+        return None
+
+    return default
+
+
+def result_line_limit(lines, has_json, expand):
+    if expand and has_json:
+        return len(lines)
+
+    return RESULT_LINES
+
+
+def render_tool(text, width):
+    name, _, summary = text.partition("\t")
+    target = file_target(summary)
+    styled_summary = hyperlink(summary, target) if target else linkify(summary)
+    return wrap(f"→ {BOLD}{name}{NORMAL_WEIGHT} {styled_summary}", width, "  ")
+
+
+def truncate(text, width):
+    if len(text) <= width:
+        return text
+
+    return text[: width - 1] + "…"
+
+
+def render_result(item, width, expand):
+    lines, has_json = result_lines(item.text, width - 4)
+    limit = result_line_limit(lines, has_json, expand)
+    shown = [f"    {DIM}{line}{RESET}" for line in lines[:limit]]
+    hidden = len(lines) - limit
+    if hidden > 0:
+        shown.append(f"    {DIM}… {hidden} more lines{RESET}")
+
+    if item.is_error:
+        shown.insert(0, f"    {RED}error{RESET}")
+
+    return shown
+
+
+def render_labeled(item, width):
+    renderer = render_plain if item.role == "you" else render_markdown
+    body = renderer(item.text, width - 7) or [""]
+    label = f"{BOLD}{item.role:<6}{RESET} "
+    return [label + body[0], *[" " * 7 + line for line in body[1:]]]
+
+
+def render_item(item, width, expand=False):
+    if item.role in ("you", "agent", "report"):
+        return render_labeled(item, width)
+
+    if item.role == "event":
+        return wrap(item.text, width, "  ")
+
+    if item.role == "shell":
+        return wrap(f"{BOLD}you{RESET}    {EVENT_COLOR}!{RESET} {CODE}{item.text}{DEFAULT_COLOR}", width, " " * 9)
+
+    if item.role == "tool":
+        return render_tool(item.text, width)
+
+    if item.role == "result":
+        return render_result(item, width, expand)
+
+    if item.role == "note":
+        return [f"{DIM}{item.text}{RESET}"]
+
+    return render_output_line(item.text, width, json_line_limit(expand, OUTPUT_JSON_LINES))
+
+
+def print_item(item, expand):
+    prefix = f"{DIM}{item.stamp}{RESET} {item.source.color}{item.source.tag:<14}{RESET} "
+    continuation = " " * GUTTER
+    key = (text_width(), expand)
+    if not item.rendered or item.rendered[0] != key:
+        item.rendered = (key, render_item(item, *key))
+
+    lines = item.rendered[1]
+    print(prefix + lines[0] + RESET)
+    for line in lines[1:]:
+        print(continuation + line + RESET)
+
+
+def clock(record):
+    stamp = record.get("timestamp") if record else None
+    if not stamp:
+        return time.strftime("%H:%M:%S")
+
+    try:
+        moment = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return time.strftime("%H:%M:%S")
+
+    return moment.astimezone().strftime("%H:%M:%S")
+
+
+def summarize_tool_input(tool_input):
+    if not isinstance(tool_input, dict):
+        lines = str(tool_input).strip().splitlines() or [""]
+        return lines[0]
+
+    for key in TOOL_SUMMARY_KEYS:
+        value = tool_input.get(key)
+        if isinstance(value, str) and value:
+            return value.splitlines()[0]
+
+    return json.dumps(tool_input, ensure_ascii=False)
+
+
+def result_text(content):
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts = [block.get("text", "") for block in content if isinstance(block, dict)]
+        return "\n".join(parts)
+
+    return ""
+
+
+def tag_value(text, tag):
+    match = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL)
+    return match[1].strip() if match else ""
+
+
+def format_duration(milliseconds):
+    seconds = int(milliseconds) // 1000
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+
+    return f"{minutes}m {seconds:02d}s"
+
+
+def describe_usage(usage):
+    details = []
+    tools = tag_value(usage, "tool_uses")
+    duration = tag_value(usage, "duration_ms")
+    tokens = tag_value(usage, "subagent_tokens") or tag_value(usage, "total_tokens")
+    if tools:
+        details.append(f"{tools} tools")
+
+    if duration.isdigit():
+        details.append(format_duration(duration))
+
+    if tokens.isdigit():
+        details.append(f"{int(tokens) // 1000}k tokens")
+
+    return details
+
+
+def parse_task_notification(notification):
+    status = tag_value(notification, "status") or "update"
+    color = STATUS_COLORS.get(status, EVENT_COLOR)
+    summary = tag_value(notification, "summary") or f"task {tag_value(notification, 'task-id')}"
+    details = " · ".join([f"{color}{status}{RESET}{DIM}", *describe_usage(tag_value(notification, "usage"))])
+    parts = [("event", f"{EVENT_COLOR}◆{RESET} {BOLD}{summary}{NORMAL_WEIGHT} {DIM}{details}{RESET}", False)]
+    report = tag_value(notification, "result")
+    if report and not report.startswith(UNREPORTED_PREFIXES):
+        parts.append(("report", report[:TEXT_CHARS], False))
+
+    return parts
+
+
+def parse_agent_message(sender, body):
+    lines = body.splitlines()
+    is_handback = bool(lines) and lines[0].startswith(HANDBACK_PREFIX)
+    if is_handback:
+        lines = lines[1:]
+
+    heading = "report from subagent" if is_handback else "message from agent"
+    event = f"{EVENT_COLOR}◆{RESET} {BOLD}{heading} {sender[:8]}{NORMAL_WEIGHT}"
+    return [("event", event, False), ("report", textwrap.dedent("\n".join(lines)).strip()[:TEXT_CHARS], False)]
+
+
+def parse_user_text(text):
+    text = SYSTEM_REMINDER.sub("", text).strip()
+    if not text:
+        return []
+
+    messages = AGENT_MESSAGE.findall(text)
+    if messages:
+        parts = []
+        for sender, body in messages:
+            parts.extend(parse_agent_message(sender, body))
+
+        return parts
+
+    notifications = TASK_NOTIFICATION.findall(text)
+    if notifications:
+        parts = []
+        for notification in notifications:
+            parts.extend(parse_task_notification(notification))
+
+        remainder = TASK_NOTIFICATION.sub("", text).strip()
+        if remainder:
+            parts.append(("you", remainder[:TEXT_CHARS], False))
+
+        return parts
+
+    if text.startswith("<bash-input>"):
+        return [("shell", tag_value(text, "bash-input"), False)]
+
+    if text.startswith(("<bash-stdout>", "<bash-stderr>", "<local-command-stdout>")):
+        output = "\n".join(filter(None, (tag_value(text, tag) for tag in COMMAND_OUTPUT_TAGS)))
+        return [("result", output, bool(tag_value(text, "bash-stderr")))] if output else []
+
+    if text.startswith(("<command-name>", "<command-message>")):
+        command = " ".join(filter(None, (tag_value(text, "command-name"), tag_value(text, "command-args"))))
+        return [("shell", command, False)]
+
+    return [("you", text[:TEXT_CHARS], False)]
+
+
+def parse_block(block, role):
+    kind = block.get("type")
+    if kind == "text" and block.get("text", "").strip():
+        if role == "user":
+            return parse_user_text(block["text"])
+
+        return [("agent", block["text"].strip()[:TEXT_CHARS], False)]
+
+    if kind == "tool_use":
+        summary = summarize_tool_input(block.get("input"))
+        return [("tool", f"{block.get('name')}\t{summary}", False)]
+
+    if kind == "tool_result":
+        return [("result", result_text(block.get("content")), bool(block.get("is_error")))]
+
+    return []
+
+
+def codex_tool_input(payload):
+    if "input" in payload:
+        return payload["input"]
+
+    try:
+        return json.loads(payload.get("arguments", ""))
+    except ValueError:
+        return payload.get("arguments", "")
+
+
+def parse_codex_item(payload):
+    kind = payload.get("type")
+    if kind == "message" and payload.get("role") in ("user", "assistant"):
+        parts = []
+        for block in payload.get("content") or []:
+            parts.extend(parse_block({"type": "text", "text": block.get("text", "")}, payload["role"]))
+
+        return parts
+
+    if kind in ("function_call", "custom_tool_call"):
+        tool_use = {"type": "tool_use", "name": payload.get("name"), "input": codex_tool_input(payload)}
+        return parse_block(tool_use, "assistant")
+
+    if kind in ("function_call_output", "custom_tool_call_output"):
+        return [("result", result_text(payload.get("output")), False)]
+
+    return []
+
+
+def parse_meta(content):
+    text = result_text(content)
+    parts = []
+    for sender, body in AGENT_MESSAGE.findall(text):
+        parts.extend(parse_agent_message(sender, body))
+
+    return parts
+
+
+def parse_record(record):
+    if record.get("type") == "response_item":
+        return parse_codex_item(record.get("payload") or {})
+
+    role = record.get("type")
+    if role not in ("user", "assistant"):
+        return []
+
+    content = record.get("message", {}).get("content")
+    if record.get("isMeta"):
+        return parse_meta(content)
+
+    if isinstance(content, str):
+        return parse_block({"type": "text", "text": content}, role)
+
+    parts = []
+    for block in content or []:
+        if isinstance(block, dict):
+            parts.extend(parse_block(block, role))
+
+    return parts
+
+
+def parse_line(line):
+    record = None
+    if line.startswith("{"):
+        try:
+            record = json.loads(line)
+        except ValueError:
+            record = None
+
+    if not isinstance(record, dict):
+        return clock(None), [("plain", line.replace("\r", ""), False)]
+
+    return clock(record), parse_record(record)
+
+
+def source_kind(file_path):
+    if os.path.basename(os.path.realpath(file_path)).startswith("agent-"):
+        return "agent"
+
+    return "bash"
+
+
+def task_files(tasks_dir):
+    if not tasks_dir:
+        return []
+
+    return glob.glob(os.path.join(tasks_dir, "*.output"))
+
+
+def add_source(viewer, file_path, tag, kind):
+    color = MAIN_COLOR if kind == "main" else TAG_COLORS[len(viewer.sources) % len(TAG_COLORS)]
+    source = Source(file_path, tag, kind, color)
+    viewer.sources[file_path] = source
+    return source
+
+
+def add_task_source(viewer, file_path):
+    kind = source_kind(file_path)
+    task_id = os.path.splitext(os.path.basename(file_path))[0]
+    return add_source(viewer, file_path, f"{kind} {task_id[:8]}", kind)
+
+
+def ordered_sources(viewer):
+    return list(viewer.sources.values())
+
+
+def selected_source(viewer):
+    sources = ordered_sources(viewer)
+    return sources[viewer.filter.selected % len(sources)]
+
+
+def is_visible(viewer, item):
+    current = viewer.filter
+    if item.role == "result" and not current.show_results:
+        return False
+
+    if current.mode == "all" or item.role == "note":
+        return True
+
+    if current.mode == "one":
+        return item.source is selected_source(viewer)
+
+    return item.source.kind == current.mode
+
+
+def describe_filter(viewer):
+    current = viewer.filter
+    if current.mode == "one":
+        shown = selected_source(viewer).tag
+    else:
+        shown = KIND_LABELS.get(current.mode, "everything")
+
+    results = "on" if current.show_results else "off"
+    json_mode = "full" if current.expand_json else "short"
+    keys = "a all m main s agents b bg n/p source r results j json q quit"
+    return f"{shown} · results {results} · json {json_mode} · {keys}"
+
+
+def print_status(viewer):
+    print(f"{DIM}── {describe_filter(viewer)}{RESET}", flush=True)
+
+
+def emit(viewer, item):
+    viewer.items.append(item)
+    if is_visible(viewer, item):
+        print_item(item, viewer.filter.expand_json)
+
+
+def emit_output(viewer, source, texts):
+    for text in texts:
+        if text.strip():
+            emit(viewer, Item(source, clock(None), "plain", text))
+
+
+def ingest_output(viewer, source, lines):
+    for line in lines:
+        emit_output(viewer, source, source.collector.add(line.replace("\r", "")))
+
+    if source.collector.is_stale():
+        emit_output(viewer, source, source.collector.flush())
+
+
+def ingest_transcript(viewer, source, lines):
+    for line in lines:
+        if not line.strip():
+            continue
+
+        stamp, parts = parse_line(line)
+        for role, text, is_error in parts:
+            emit(viewer, Item(source, stamp, role, text, is_error))
+
+
+def ingest(viewer, source, lines):
+    if source.kind == "bash":
+        ingest_output(viewer, source, lines)
+    else:
+        ingest_transcript(viewer, source, lines)
+
+    sys.stdout.flush()
+
+
+def redraw(viewer):
+    sys.stdout.write(CLEAR_SCREEN)
+    print(f"{BOLD}Following session {viewer.session_id}{RESET}")
+    print(f"{DIM}transcript {viewer.transcript}\ntasks      {viewer.tasks_dir}{RESET}\n")
+    visible = [item for item in viewer.items if is_visible(viewer, item)]
+    for item in visible[-REDRAW_ITEMS:]:
+        print_item(item, viewer.filter.expand_json)
+
+    print_status(viewer)
+
+
+def handle_key(viewer, key):
+    current = viewer.filter
+    if key == "q":
+        raise KeyboardInterrupt
+
+    if key in KEY_MODES:
+        current.mode = KEY_MODES[key]
+    elif key in ("n", "p"):
+        step = 1 if key == "n" else -1
+        current.selected = current.selected + step if current.mode == "one" else 0
+        current.mode = "one"
+    elif key == "r":
+        current.show_results = not current.show_results
+    elif key == "j":
+        current.expand_json = not current.expand_json
+    else:
+        return
+
+    redraw(viewer)
+
+
+def read_key(timeout):
+    if not sys.stdin.isatty():
+        time.sleep(timeout)
+        return None
+
+    ready, _, _ = select.select([sys.stdin], [], [], timeout)
+    if not ready:
+        return None
+
+    return sys.stdin.read(1)
+
+
+def load_sources(viewer):
+    if viewer.transcript:
+        add_source(viewer, viewer.transcript, "main", "main")
+
+    for file_path in task_files(viewer.tasks_dir):
+        add_task_source(viewer, file_path)
+
+    by_age = sorted(viewer.sources.values(), key=lambda source: os.path.getmtime(source.file_path))
+    for source in by_age:
+        ingest(viewer, source, source.read_backlog())
+
+
+def poll(viewer):
+    for file_path in task_files(viewer.tasks_dir):
+        if file_path not in viewer.sources:
+            source = add_task_source(viewer, file_path)
+            emit(viewer, Item(source, time.strftime("%H:%M:%S"), "note", f"new {source.tag}: {file_path}"))
+
+    for source in list(viewer.sources.values()):
+        ingest(viewer, source, source.read_lines())
+
+
+def follow(session_id):
+    viewer = Viewer(session_id, find_transcript(session_id), find_tasks_dir(session_id))
+    if not viewer.transcript and not viewer.tasks_dir:
+        fail(f"no transcript or task outputs for session {session_id}")
+
+    signal.signal(signal.SIGWINCH, lambda *_: setattr(viewer, "needs_redraw", True))
+    print(f"{BOLD}Following session {session_id}{RESET}")
+    print(f"{DIM}transcript {viewer.transcript}\ntasks      {viewer.tasks_dir}{RESET}\n")
+    load_sources(viewer)
+    print_status(viewer)
+
+    while True:
+        key = read_key(POLL_SECONDS)
+        if key:
+            handle_key(viewer, key)
+
+        if viewer.needs_redraw:
+            viewer.needs_redraw = False
+            redraw(viewer)
+
+        poll(viewer)
+
+
+def follow_with_keys(session_id):
+    if not sys.stdin.isatty():
+        follow(session_id)
+        return
+
+    saved = termios.tcgetattr(sys.stdin)
+    tty.setcbreak(sys.stdin)
+    try:
+        follow(session_id)
+    finally:
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, saved)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    commands = parser.add_subparsers(dest="command", required=True)
+    open_parser = commands.add_parser("open")
+    open_parser.add_argument("--window", action="store_true")
+    open_parser.add_argument("pane", nargs="?", default=os.environ.get("TMUX_PANE", ""))
+    follow_parser = commands.add_parser("follow")
+    follow_parser.add_argument("session_id")
+    args = parser.parse_args()
+
+    if args.command == "open":
+        toggle_logs(args.pane, args.window)
+        return
+
+    try:
+        follow_with_keys(args.session_id)
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()
