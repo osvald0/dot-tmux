@@ -55,7 +55,8 @@ OUTPUT_JSON_LINES = 24
 STRUCTURED_CANDIDATES = 6
 JSON_BLOCK_LINES = 2000
 JSON_BLOCK_SECONDS = 1.0
-TEXT_CHARS = 4000
+REPAIR_ATTEMPTS = 40
+TEXT_CHARS = 12000
 GUTTER = 24
 MIN_TEXT_WIDTH = 40
 
@@ -81,6 +82,9 @@ JSON_TOKEN = re.compile(
     r"|(?P<literal>\btrue\b|\bfalse\b|\bnull\b)"
 )
 JSON_OPENING = re.compile(r"[\[{][\[{\s]*$")
+CUT_JSON_START = re.compile(r"[\[{]\s*[\"\[{]")
+SGR_COLOR = re.compile(r"\033\[(?:3[0-79]|0)m")
+MARKDOWN_FENCE = re.compile(r"^\s*(```|~~~)\s*(?:markdown|md)\s*$", re.IGNORECASE)
 STATUS_COLORS = {"completed": "\033[32m", "failed": RED, "killed": RED, "stopped": "\033[33m"}
 UNREPORTED_PREFIXES = ("This agent has not reported yet", "This agent's report was delivered")
 HANDBACK_PREFIX = "[Subagent hand-back]"
@@ -91,7 +95,22 @@ SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTAL
 TAG_COLORS = ("\033[36m", "\033[35m", "\033[33m", "\033[32m", "\033[34m")
 CLEAR_SCREEN = "\033[2J\033[3J\033[H"
 
-TOOL_SUMMARY_KEYS = ("description", "command", "cmd", "file_path", "path", "pattern", "url", "prompt", "skill")
+TOOL_SUMMARY_KEYS = (
+    "description",
+    "command",
+    "cmd",
+    "file_path",
+    "path",
+    "pattern",
+    "url",
+    "prompt",
+    "skill",
+    "summary",
+    "query",
+)
+TOOL_BODY_KEYS = ("message",)
+TOOL_HIDDEN_KEYS = ("sessionId", "to")
+SCALAR_FIELD_CHARS = 48
 KIND_LABELS = {"main": "main transcript", "agent": "subagents", "bash": "background commands"}
 KEY_MODES = {"a": "all", "m": "main", "s": "agent", "b": "bash"}
 
@@ -391,11 +410,64 @@ def prepare_markdown(text):
     return "\n".join(prepared)
 
 
-def render_markdown(text, width):
+@dataclass
+class DraftSplitter:
+    segments: list = field(default_factory=list)
+    current: list = field(default_factory=list)
+    marker: str = ""
+    inner_fence: bool = False
+
+    def close_segment(self):
+        self.segments.append((bool(self.marker), "\n".join(self.current)))
+        self.current = []
+
+    def add(self, line):
+        stripped = line.strip()
+        opening = MARKDOWN_FENCE.match(line)
+        if not self.marker and opening:
+            self.close_segment()
+            self.marker = opening[1]
+            return
+
+        if self.marker and stripped == self.marker and not self.inner_fence:
+            self.close_segment()
+            self.marker = ""
+            return
+
+        if self.marker and stripped.startswith(self.marker):
+            self.inner_fence = not self.inner_fence
+
+        self.current.append(line)
+
+
+def split_markdown_drafts(text):
+    splitter = DraftSplitter()
+    for line in text.splitlines():
+        splitter.add(line)
+
+    splitter.close_segment()
+    return [(is_draft, segment) for is_draft, segment in splitter.segments if segment.strip()]
+
+
+def render_markdown_segment(text, width):
     buffer = io.StringIO()
     console = Console(file=buffer, width=width, force_terminal=True, color_system="truecolor", theme=MARKDOWN_THEME)
     console.print(LogMarkdown(prepare_markdown(text), code_theme="ansi_dark", hyperlinks=True))
     return [TRAILING_BLANK.sub("", line) for line in buffer.getvalue().rstrip("\n").split("\n")]
+
+
+def render_markdown(text, width):
+    lines = []
+    for is_draft, segment in split_markdown_drafts(text):
+        if lines:
+            lines.append("")
+
+        if is_draft:
+            lines.extend(f"{DIM}│{RESET} {line}" for line in render_markdown_segment(segment, width - 2))
+        else:
+            lines.extend(render_markdown_segment(segment, width))
+
+    return lines
 
 
 def render_plain(text, width):
@@ -421,16 +493,74 @@ def load_structured(fragment):
     return None
 
 
+@dataclass
+class Structured:
+    prefix: str
+    value: dict | list
+    cut: bool = False
+
+
+def json_cut_points(fragment):
+    stack, cuts = [], []
+    in_string, escaped = False, False
+    for index, char in enumerate(fragment):
+        if escaped:
+            escaped = False
+        elif in_string and char == "\\":
+            escaped = True
+        elif char == '"':
+            in_string = not in_string
+        elif in_string:
+            continue
+        elif char in "{[":
+            stack.append("}" if char == "{" else "]")
+            cuts.append((index + 1, list(stack)))
+        elif char in "}]" and stack:
+            stack.pop()
+        elif char == ",":
+            cuts.append((index, list(stack)))
+
+    if not stack:
+        return []
+
+    return cuts[-REPAIR_ATTEMPTS:]
+
+
+def repair_cut_json(fragment):
+    for end, closers in reversed(json_cut_points(fragment)):
+        try:
+            value = json.loads(fragment[:end] + "".join(reversed(closers)))
+        except ValueError:
+            continue
+
+        if value:
+            return value
+
+    return None
+
+
+def find_cut_json(stripped):
+    opening = CUT_JSON_START.search(stripped)
+    if not opening:
+        return None
+
+    value = repair_cut_json(stripped[opening.start() :])
+    if value is None:
+        return None
+
+    return Structured(stripped[: opening.start()], value, cut=True)
+
+
 def find_structured(line):
     stripped = line.strip()
     if not stripped.endswith(("}", "]")):
-        return None
+        return find_cut_json(stripped)
 
     starts = [index for index, char in enumerate(stripped) if char in "{["][:STRUCTURED_CANDIDATES]
     for start in starts:
         value = load_structured(stripped[start:])
         if value is not None:
-            return stripped[:start], value
+            return Structured(stripped[:start], value)
 
     return None
 
@@ -452,18 +582,73 @@ def colorize_json(text):
     return JSON_TOKEN.sub(color_json_token, text)
 
 
-def render_structured(prefix, value, width, max_lines):
-    compact = json.dumps(value, ensure_ascii=False, default=str)
-    if len(prefix) + len(compact) <= width:
-        return [linkify(prefix) + colorize_json(compact)]
+def compact_json(value):
+    return json.dumps(value, ensure_ascii=False, default=str)
 
-    pretty = json.dumps(value, ensure_ascii=False, indent=2, default=str).splitlines()
-    limit = max_lines or len(pretty)
-    shown = [colorize_json(truncate(line, width)) for line in pretty[:limit]]
-    shown[0] = linkify(prefix) + shown[0]
-    hidden = len(pretty) - limit
+
+def container_parts(value):
+    if isinstance(value, dict):
+        return "{", "}", [f"{compact_json(str(key))}: " for key in value], list(value.values())
+
+    return "[", "]", [""] * len(value), value
+
+
+def layout_json(value, width, indent, lead, offset=0):
+    compact = compact_json(value)
+    if not isinstance(value, (dict, list)) or not value or offset + len(lead) + len(compact) < width:
+        return [lead + compact]
+
+    opening, closing, keys, children = container_parts(value)
+    lines = [lead + opening]
+    for position, (key, child) in enumerate(zip(keys, children)):
+        child_lines = layout_json(child, width, indent + 2, " " * (indent + 2) + key)
+        if position < len(children) - 1:
+            child_lines[-1] += ","
+
+        lines.extend(child_lines)
+
+    lines.append(" " * indent + closing)
+    return lines
+
+
+def json_layout_lines(prefix, value, width):
+    compact = compact_json(value)
+    if len(prefix) + len(compact) <= width:
+        return [compact]
+
+    return layout_json(value, width, 0, "", len(prefix))
+
+
+def active_color(line):
+    codes = SGR_COLOR.findall(line)
+    if not codes or codes[-1] in (DEFAULT_COLOR, RESET):
+        return ""
+
+    return codes[-1]
+
+
+def wrap_json_line(colored, plain, width):
+    indent = len(plain) - len(plain.lstrip(" "))
+    pieces = wrap(colored, width, " " * (indent + 2))
+    carried = [pieces[0]]
+    for piece in pieces[1:]:
+        carried.append(active_color(carried[-1]) + piece)
+
+    return carried
+
+
+def render_structured(structured, width, max_lines):
+    laid_out = json_layout_lines(structured.prefix, structured.value, width)
+    colored = [colorize_json(line) for line in laid_out]
+    colored[0] = linkify(structured.prefix) + colored[0]
+    wrapped = [piece for line, plain in zip(colored, laid_out) for piece in wrap_json_line(line, plain, width)]
+    limit = max_lines or len(wrapped)
+    shown = wrapped[:limit]
+    hidden = len(wrapped) - limit
     if hidden > 0:
         shown.append(f"{DIM}… {hidden} more lines{RESET}")
+    elif structured.cut:
+        shown.append(f"{DIM}… cut off in the output{RESET}")
 
     return shown
 
@@ -471,7 +656,7 @@ def render_structured(prefix, value, width, max_lines):
 def render_output_line(line, width, max_lines):
     structured = find_structured(line)
     if structured:
-        return render_structured(*structured, width, max_lines)
+        return render_structured(structured, width, max_lines)
 
     return wrap(linkify(line), width)
 
@@ -488,7 +673,7 @@ def result_lines(text, width):
     for line in join_json_blocks(text):
         structured = find_structured(line)
         if structured:
-            lines.extend(render_structured(*structured, width, None))
+            lines.extend(render_structured(structured, width, None))
             has_json = True
         else:
             lines.append(linkify(truncate(line, width)))
@@ -541,12 +726,12 @@ def render_result(item, width, expand):
 def render_labeled(item, width):
     renderer = render_plain if item.role == "you" else render_markdown
     body = renderer(item.text, width - 7) or [""]
-    label = f"{BOLD}{item.role:<6}{RESET} "
+    label = " " * 7 if item.role == "body" else f"{BOLD}{item.role:<6}{RESET} "
     return [label + body[0], *[" " * 7 + line for line in body[1:]]]
 
 
 def render_item(item, width, expand=False):
-    if item.role in ("you", "agent", "report"):
+    if item.role in ("you", "agent", "report", "body"):
         return render_labeled(item, width)
 
     if item.role == "event":
@@ -593,17 +778,58 @@ def clock(record):
     return moment.astimezone().strftime("%H:%M:%S")
 
 
-def summarize_tool_input(tool_input):
-    if not isinstance(tool_input, dict):
-        lines = str(tool_input).strip().splitlines() or [""]
-        return lines[0]
+def first_question(tool_input):
+    questions = tool_input.get("questions")
+    if isinstance(questions, list) and questions and isinstance(questions[0], dict):
+        return str(questions[0].get("question", ""))
 
+    return ""
+
+
+def scalar_fields(tool_input):
+    fields = []
+    for key, value in tool_input.items():
+        if key in TOOL_BODY_KEYS or key in TOOL_HIDDEN_KEYS or not isinstance(value, (str, int, float)):
+            continue
+
+        lines = str(value).splitlines() or [""]
+        fields.append(truncate(f"{key}={lines[0]}", SCALAR_FIELD_CHARS))
+
+    return " ".join(fields)
+
+
+def describe_tool_input(tool_input):
     for key in TOOL_SUMMARY_KEYS:
         value = tool_input.get(key)
         if isinstance(value, str) and value:
             return value.splitlines()[0]
 
-    return json.dumps(tool_input, ensure_ascii=False)
+    return first_question(tool_input) or scalar_fields(tool_input)
+
+
+def summarize_tool_input(tool_input):
+    if not isinstance(tool_input, dict):
+        lines = str(tool_input).strip().splitlines() or [""]
+        return lines[0]
+
+    summary = describe_tool_input(tool_input)
+    recipient = tool_input.get("to")
+    if isinstance(recipient, str) and recipient:
+        return f"to {recipient} · {summary}" if summary else f"to {recipient}"
+
+    return summary
+
+
+def tool_body(tool_input):
+    if not isinstance(tool_input, dict):
+        return ""
+
+    for key in TOOL_BODY_KEYS:
+        value = tool_input.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    return ""
 
 
 def result_text(content):
@@ -722,7 +948,12 @@ def parse_block(block, role):
 
     if kind == "tool_use":
         summary = summarize_tool_input(block.get("input"))
-        return [("tool", f"{block.get('name')}\t{summary}", False)]
+        parts = [("tool", f"{block.get('name')}\t{summary}", False)]
+        body = tool_body(block.get("input"))
+        if body:
+            parts.append(("body", body[:TEXT_CHARS], False))
+
+        return parts
 
     if kind == "tool_result":
         return [("result", result_text(block.get("content")), bool(block.get("is_error")))]

@@ -177,11 +177,14 @@ pane and follows:
 | Each subagent's transcript | `agent <id>` | Claude Code |
 | Background command output | `bash <id>` | Claude Code |
 
-New subagents and background commands appear as they start. Replies render
-as Markdown, and links, URLs, and file paths that exist are clickable (tmux
-needs the `hyperlinks` terminal feature, which `tmux.conf` sets; reattach once
-after reloading). JSON and Python dicts or lists are colored, and indented when
-they do not fit on one line. Tool results show 12 lines, and JSON in background
+New subagents and background commands appear as they start. Replies and the
+messages agents send each other (handbacks, `SendMessage`) render as Markdown,
+and a ```` ```markdown ```` block, such as a PR draft, renders inside a `│` bar.
+Links, URLs, and file paths that exist are clickable (tmux needs the
+`hyperlinks` terminal feature, which `tmux.conf` sets; reattach once after
+reloading). JSON and Python dicts or lists are colored, and go one key per line
+when they do not fit beside their line. JSON cut off in the output is shown up
+to its last complete value. Tool results show 12 lines, and JSON in background
 output shows 24.
 
 | Key | Action |
