@@ -151,6 +151,53 @@ directory.
 | `prefix S` | CPU, memory, and disk usage in a popup |
 | `prefix T` | Tokens and cost of the agents in the current tab, in a popup |
 
+## Agent logs
+
+`prefix e` opens a pane beside the current agent that follows its session as it
+runs, and `prefix W` opens the same view in a window named `logs <session id>`.
+Press `prefix e` again, from the agent or the logs pane, to close it. The
+`/logs` command in agent-skills does the same from inside Claude Code.
+
+```
+18:58:07 main           agent  Ran the batch; 12 runs valid.
+18:58:09 main           → Bash Summarize the batch
+                            {"kinds": {"valid": 12}, "stopped": null}
+18:58:12 bash 4f2a91c0  restore.json: {
+                          "at": "2026-11-15T21:41:52+00:00",
+                          "reinstalled": false
+                        }
+```
+
+`tmux-agent-logs` reads the session ID that `tmux-agent-status` stores on the
+pane and follows:
+
+| Source | Tag | Agents |
+| --- | --- | --- |
+| The session transcript: your prompts, replies, tool calls, and their results | `main` | Claude Code, Codex |
+| Each subagent's transcript | `agent <id>` | Claude Code |
+| Background command output | `bash <id>` | Claude Code |
+
+New subagents and background commands appear as they start. Replies render
+as Markdown, and links, URLs, and file paths that exist are clickable (tmux
+needs the `hyperlinks` terminal feature, which `tmux.conf` sets; reattach once
+after reloading). JSON and Python dicts or lists are colored, and indented when
+they do not fit on one line. Tool results show 12 lines, and JSON in background
+output shows 24.
+
+| Key | Action |
+| --- | --- |
+| `a` | Everything |
+| `m` | The main transcript only |
+| `s` | Subagents only |
+| `b` | Background commands only |
+| `n` / `p` | One source at a time, next or previous |
+| `r` | Tool results on or off |
+| `j` | Long JSON in full or cut short |
+| `q` | Quit |
+
+Outside tmux, `tmux-agent-logs follow <session id>` runs it in any terminal. It
+needs `uv`, which installs its one Python dependency (`rich`) on the first run.
+
 ## AI usage
 
 `prefix v` opens a popup with Claude and Codex usage:
