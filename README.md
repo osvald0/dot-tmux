@@ -139,6 +139,7 @@ directory.
 | `prefix r` | Delivery runs and every other agent session in a popup sized to it (`runs popup` from agent-skills), waiting first; type a number to jump to that pane, `o` and a number to open a run's PR |
 | `prefix e` | Follow the current agent pane's session in a split beside it, focus stays on the agent (`tmux-agent-logs`): its transcript with tool output, plus subagent transcripts and background command output for Claude Code. Markdown renders with clickable links and file paths, and JSON (or a Python dict or list) is colored and indented when it does not fit on one line. In the logs pane: `a` all, `m` main, `s` subagents, `b` background, `n`/`p` one source at a time, `r` tool results on or off, `j` long JSON in full or cut short, `q` quit. Press `prefix e` again, in the agent pane or the logs pane, to close them |
 | `prefix W` | The same logs in a new window; `prefix e` or `q` inside it closes it |
+| `prefix C-e` | The same logs in a new Ghostty window, to move to another screen; `prefix C-e` again from the agent pane, or `q` inside it, closes it |
 | `prefix s` | Session list, with agent state dots when a session is expanded |
 | `prefix L` | Switch to the last session |
 | `prefix c` | New window in the current directory |
@@ -155,8 +156,11 @@ directory.
 
 `prefix e` opens a pane beside the current agent that follows its session as it
 runs, and `prefix W` opens the same view in a window named `logs <session id>`.
-Press `prefix e` again, from the agent or the logs pane, to close it. The
-`/logs` command in agent-skills does the same from inside Claude Code.
+Press `prefix e` again, from the agent or the logs pane, to close it.
+`prefix C-e` opens it in a new Ghostty window instead, through Ghostty's
+AppleScript support (macOS, tested on Ghostty 1.4), and closes that window when
+pressed again. The `/logs` command in agent-skills does the same from inside
+Claude Code (`/logs`, `/logs window`, `/logs ghostty`).
 
 ```
 18:58:07 main           agent  Ran the batch; 12 runs valid.

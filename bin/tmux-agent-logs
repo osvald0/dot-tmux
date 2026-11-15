@@ -7,8 +7,10 @@
 
   tmux-agent-logs open [pane]           follow the pane's session in a split beside it (dot-tmux prefix e)
   tmux-agent-logs open --window [pane]  follow it in a new window (dot-tmux prefix W)
+  tmux-agent-logs open --ghostty [pane] follow it in a new Ghostty window (dot-tmux prefix C-e)
 
 Run open again from the agent pane, or from the logs pane itself, and it closes the logs instead.
+The Ghostty window closes when open --ghostty runs again from the agent pane, or on q.
   tmux-agent-logs follow <session id>   follow it in this terminal
 
 Follows the session transcript with full tool output and, for Claude Code, every subagent
@@ -94,6 +96,35 @@ TASK_NOTIFICATION = re.compile(r"<task-notification>(.*?)</task-notification>", 
 SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 TAG_COLORS = ("\033[36m", "\033[35m", "\033[33m", "\033[32m", "\033[34m")
 CLEAR_SCREEN = "\033[2J\033[3J\033[H"
+GHOSTTY_TOGGLE = """
+on run {windowName, workingDirectory, logsCommand, searchPath}
+  tell application "Ghostty"
+    set openWindows to every window whose name is windowName
+    if (count of openWindows) > 0 then
+      repeat with logsWindow in openWindows
+        close window logsWindow
+      end repeat
+      return
+    end if
+    set surfaceConfiguration to new surface configuration
+    set command of surfaceConfiguration to logsCommand
+    set initial working directory of surfaceConfiguration to workingDirectory
+    set environment variables of surfaceConfiguration to {searchPath}
+    new window with configuration surfaceConfiguration
+    delay 0.3
+    set name override of focused terminal of selected tab of front window to windowName
+  end tell
+end run
+"""
+GHOSTTY_CLOSE = """
+on run {windowName}
+  tell application "Ghostty"
+    repeat with logsWindow in (every window whose name is windowName)
+      close window logsWindow
+    end repeat
+  end tell
+end run
+"""
 
 TOOL_SUMMARY_KEYS = (
     "description",
@@ -266,7 +297,25 @@ def open_logs_panes(pane):
     return [line.split()[0] for line in listing.splitlines() if line.endswith(f" {pane}")]
 
 
-def toggle_logs(pane, in_window):
+def toggle_ghostty_logs(pane):
+    session_id = tmux("display-message", "-p", "-t", pane, "#{@agent_session_id}")
+    if not session_id:
+        fail("this pane has no agent session")
+
+    pane_path = tmux("display-message", "-p", "-t", pane, "#{pane_current_path}")
+    window_name = f"logs {session_id[:8]}"
+    command = shlex.join([os.path.abspath(__file__), "follow", "--ghostty-window", window_name, session_id])
+    arguments = [window_name, pane_path, command, f"PATH={os.environ.get('PATH', '')}"]
+    result = subprocess.run(["osascript", "-", *arguments], input=GHOSTTY_TOGGLE, capture_output=True, text=True)
+    if result.returncode != 0:
+        fail(f"could not open a Ghostty window: {result.stderr.strip()}")
+
+
+def toggle_logs(pane, target):
+    if target == "ghostty":
+        toggle_ghostty_logs(pane)
+        return
+
     if tmux("display-message", "-p", "-t", pane, "#{@logs_for}"):
         tmux("kill-pane", "-t", pane)
         return
@@ -283,7 +332,7 @@ def toggle_logs(pane, in_window):
 
     pane_path = tmux("display-message", "-p", "-t", pane, "#{pane_current_path}")
     command = f"{shlex.quote(os.path.abspath(__file__))} follow {shlex.quote(session_id)}"
-    if in_window:
+    if target == "window":
         logs_pane = tmux("new-window", "-P", "-F", "#{pane_id}", "-n", f"logs {session_id[:8]}", "-c", pane_path, command)
     else:
         logs_pane = tmux("split-window", "-P", "-F", "#{pane_id}", "-h", "-d", "-l", "45%", "-t", pane, "-c", pane_path, command)
@@ -1248,20 +1297,26 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     open_parser = commands.add_parser("open")
-    open_parser.add_argument("--window", action="store_true")
+    targets = open_parser.add_mutually_exclusive_group()
+    targets.add_argument("--window", dest="target", action="store_const", const="window", default="split")
+    targets.add_argument("--ghostty", dest="target", action="store_const", const="ghostty")
     open_parser.add_argument("pane", nargs="?", default=os.environ.get("TMUX_PANE", ""))
     follow_parser = commands.add_parser("follow")
+    follow_parser.add_argument("--ghostty-window", metavar="name")
     follow_parser.add_argument("session_id")
     args = parser.parse_args()
 
     if args.command == "open":
-        toggle_logs(args.pane, args.window)
+        toggle_logs(args.pane, args.target)
         return
 
     try:
         follow_with_keys(args.session_id)
     except KeyboardInterrupt:
         pass
+    finally:
+        if args.ghostty_window:
+            subprocess.run(["osascript", "-", args.ghostty_window], input=GHOSTTY_CLOSE, capture_output=True, text=True)
 
 
 if __name__ == "__main__":
