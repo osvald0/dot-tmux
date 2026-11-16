@@ -15,11 +15,11 @@ const childSessions = new Set();
 let queue = Promise.resolve();
 
 function report(status, sessionID) {
-  const input = JSON.stringify(sessionID ? { session_id: sessionID } : {});
+  const input = JSON.stringify({ session_id: sessionID, cwd: process.cwd() });
   queue = queue.then(
     () =>
       new Promise((resolve) => {
-        const child = execFile(STATUS_SCRIPT, [status], () => resolve());
+        const child = execFile(STATUS_SCRIPT, [status, "opencode", String(process.pid)], () => resolve());
         child.stdin?.end(input);
       }),
   );
@@ -34,7 +34,7 @@ export const TmuxAgentStatusPlugin = async () => {
   // Exit handlers do not run when the TUI quits, so a detached watcher clears the pane instead.
   spawn(
     "/bin/sh",
-    ["-c", 'while kill -0 "$0" 2>/dev/null; do sleep 2; done; exec "$1" clear </dev/null', String(process.pid), STATUS_SCRIPT],
+    ["-c", 'while kill -0 "$0" 2>/dev/null; do sleep 2; done; exec "$1" clear opencode "$0" </dev/null', String(process.pid), STATUS_SCRIPT],
     { detached: true, stdio: "ignore" },
   ).unref();
 

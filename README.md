@@ -112,8 +112,9 @@ Setup replaces this repository's hook commands, including their old
 `tmux-claude-status` name. Codex asks you to trust new or changed hooks
 the next time it starts.
 
-Hooks pass the state as the first argument and the hook's JSON on stdin, which
-is where the session ID comes from:
+Hooks pass the state and agent type as arguments, with the hook's JSON on stdin.
+The payload supplies the session ID. End events only clear the matching session;
+opencode also supplies a process owner so a late exit cannot clear its replacement:
 
 | State | Claude Code | Codex | opencode |
 | --- | --- | --- | --- |
@@ -127,8 +128,8 @@ is where the session ID comes from:
 Codex runs hooks from a shared app-server daemon instead of from the pane, so
 its `TMUX_PANE` points at whichever pane started the daemon. For Codex payloads
 the helper ignores `TMUX_PANE` and finds the pane itself: the one already tagged
-with that session ID, or else the most recently active Codex pane in the same
-directory.
+with that session ID, or one unclaimed Codex pane in the same directory.
+If more than one pane matches, it leaves them unchanged instead of guessing.
 
 ## Key bindings
 
