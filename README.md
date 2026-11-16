@@ -64,8 +64,8 @@ The number block's color shows the state of the agent in that window:
 | Red `#f38ba8` | error | The turn failed |
 | Gray `#9399b2` | ready or none | The agent is ready for a prompt, or no agent is running |
 
-The session list (`prefix s`) and the agent picker (`prefix a`) show the same
-states as a colored dot next to each window and pane.
+The session list (`prefix s`) shows those states as colored dots next to windows
+and panes. Both `prefix a` and `prefix r` open the shared session registry picker.
 
 ### Tab tokens and cost
 
@@ -97,10 +97,22 @@ phase, and how many other runs are waiting on you.
 
 ## Agent status
 
-`tmux-agent-status` stores an agent's state on its pane, with the time it last
-changed, which drives the tab colors, the picker, session restore, and the
-session rows in agent-skills' `runs`. The helper does nothing outside tmux.
-Each agent calls it from the integration in `agents/`:
+`tmux-agent-status` sends session events to agent-skills' `runs` command, which
+stores sessions and delivery runs in one SQLite registry. It also caches the
+agent type, session ID, and activity on the tmux pane for tab colors and restore.
+Events with a session ID are recorded outside tmux too. A completed turn and a
+completed delivery run remain separate states.
+
+Install agent-skills' global tools before using the registry picker. The registry
+lives at `$XDG_DATA_HOME/agent-sessions/` (normally `~/.local/share/agent-sessions/`).
+Agent-skills imports legacy run records without deleting their source files.
+`runs --all` includes disconnected conversations; `runs go` gives the appropriate
+resume command when their panes are closed. Claude, Codex, and opencode continue
+to own their transcripts. tmux-resurrect continues to own terminal layouts.
+
+The hooks still update pane colors when `runs` is unavailable or returns an error.
+`TMUX_AGENT_RUNS` can override the executable for isolated tests.
+Each agent calls the helper from the integration in `agents/`:
 
 | Agent | Integration | Installed into |
 | --- | --- | --- |
@@ -135,9 +147,9 @@ If more than one pane matches, it leaves them unchanged instead of guessing.
 
 | Keys | Action |
 | --- | --- |
-| `prefix a` | Agent picker: every pane running an agent, across all sessions |
+| `prefix a` | Shared agent session picker (`runs popup` from agent-skills), with delivery details when linked |
 | `prefix Space` | Jump to the next waiting agent, or else a finished one |
-| `prefix r` | Delivery runs and every other agent session in a popup sized to it (`runs popup` from agent-skills), waiting first; type a number to jump to that pane, `o` and a number to open a run's PR |
+| `prefix r` | Alias for `prefix a`; waiting sessions first, a number to jump to the displayed pane, `o` and a number to open its PR |
 | `prefix e` | Follow the current agent pane's session in a split beside it, focus stays on the agent (`tmux-agent-logs`): its transcript with tool output, plus subagent transcripts and background command output for Claude Code. Markdown renders with clickable links and file paths, and JSON (or a Python dict or list) is colored and indented when it does not fit on one line. In the logs pane: `a` all, `m` main, `s` subagents, `b` background, `n`/`p` one source at a time, `r` tool results on or off, `j` long JSON in full or cut short, `q` quit. Press `prefix e` again, in the agent pane or the logs pane, to close them |
 | `prefix W` | The same logs in a new window; `prefix e` or `q` inside it closes it |
 | `prefix C-e` | The same logs in a new Ghostty window, to move to another screen; `prefix C-e` again from the agent pane, or `q` inside it, closes it |
@@ -296,6 +308,7 @@ once it drops below.
 
 ## Session persistence
 
+The registry retains conversation metadata; this plugin restores your terminal workspace.
 Save the current tmux environment with `prefix + Ctrl-s`. Restore the most
 recent save with `prefix + Ctrl-r`. Saves include sessions, windows, panes,
 layouts, working directories, and supported running programs. Pane contents
@@ -337,3 +350,14 @@ its own notifications through its desktop app.
 Extended keys are enabled so Shift+Enter reaches Claude Code as a newline, and
 passthrough is enabled so programs inside tmux can send escape sequences to
 the outer terminal.
+
+## Checks
+
+Run the shell checks in `tests/`, plus `python3 tests/agent-status.py` and
+`node --experimental-vm-modules tests/opencode-status.mjs`. The Node check
+uses built-in module mocks and may print an experimental-module warning.
+
+For the cross-project flow, run
+`python3 tests/registry-integration.py /absolute/path/to/agent-skills/global/bin/runs`.
+It creates a temporary tmux server and explicitly isolated database, verifies
+registration through archived resume, then removes its fixtures and server.

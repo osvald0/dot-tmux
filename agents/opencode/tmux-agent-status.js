@@ -12,10 +12,20 @@ const BUSY_STATUSES = new Set(["active", "busy", "pending", "retry", "running", 
 
 // Subagent sessions have a parent; their events must not replace the pane's root session.
 const childSessions = new Set();
+const watchedSessions = new Set();
 let queue = Promise.resolve();
 
 function report(status, sessionID) {
   const input = JSON.stringify({ session_id: sessionID, cwd: process.cwd() });
+  const watcherID = sessionID || "";
+  if (!watchedSessions.has(watcherID)) {
+    watchedSessions.add(watcherID);
+    spawn(
+      "/bin/sh",
+      ["-c", 'while kill -0 "$0" 2>/dev/null; do sleep 2; done; printf "%s" "$2" | "$1" clear opencode "$0"', String(process.pid), STATUS_SCRIPT, input],
+      { detached: true, stdio: "ignore" },
+    ).unref();
+  }
   queue = queue.then(
     () =>
       new Promise((resolve) => {
@@ -27,17 +37,6 @@ function report(status, sessionID) {
 }
 
 export const TmuxAgentStatusPlugin = async () => {
-  if (!process.env.TMUX || !process.env.TMUX_PANE) {
-    return {};
-  }
-
-  // Exit handlers do not run when the TUI quits, so a detached watcher clears the pane instead.
-  spawn(
-    "/bin/sh",
-    ["-c", 'while kill -0 "$0" 2>/dev/null; do sleep 2; done; exec "$1" clear opencode "$0" </dev/null', String(process.pid), STATUS_SCRIPT],
-    { detached: true, stdio: "ignore" },
-  ).unref();
-
   await report("ready");
 
   return {

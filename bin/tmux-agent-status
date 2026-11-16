@@ -5,6 +5,11 @@ set -euo pipefail
 status=${1:-}
 agent_type=${2:-}
 owner=${3:-}
+focus_update=0
+[[ -n $agent_type ]] || focus_update=1
+registry=${TMUX_AGENT_RUNS:-$HOME/.local/bin/runs}
+socket=
+title=
 payload='{}'
 if [[ ! -t 0 ]]; then
   payload=$(cat)
@@ -44,8 +49,18 @@ case $agent_type in
   *) exit 2 ;;
 esac
 
+report_session() {
+  [[ -x $registry && -n $session_id ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local report
+  report=$(jq --arg session "$session_id" '.session_id = $session' <<< "$payload")
+  "$registry" session "$status" --agent "${agent_type:-claude}" \
+    --pane "${TMUX_PANE:-}" --socket "$socket" --title "$title" \
+    <<< "$report" >/dev/null 2>&1 || true
+}
+
 # Codex's shared daemon inherits another pane's environment; ambiguous matches must stay unbound.
-if [[ $agent_type == codex ]]; then
+if [[ $agent_type == codex && ( -n ${TMUX:-} || -n ${TMUX_PANE:-} ) ]]; then
   TMUX_PANE=$(
     tmux list-panes -a -F $'#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{@agent_session_id}' 2>/dev/null |
       awk -F '\t' -v sid="$session_id" -v cwd="$cwd" -v status="$status" '
@@ -61,15 +76,39 @@ if [[ $agent_type == codex ]]; then
 fi
 
 if [[ -z ${TMUX_PANE:-} ]] || ! tmux display-message -p -t "$TMUX_PANE" '' >/dev/null 2>&1; then
+  TMUX_PANE=
+  report_session
   exit 0
 fi
 
+socket=$(tmux display-message -p -t "$TMUX_PANE" '#{socket_path}')
+title=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_title}')
+
 current_session=$(tmux show-options -pqv -t "$TMUX_PANE" @agent_session_id)
 current_owner=$(tmux show-options -pqv -t "$TMUX_PANE" @agent_owner)
+current_type=$(tmux show-options -pqv -t "$TMUX_PANE" @agent_type)
 if [[ $status == clear ]]; then
-  [[ -z $session_id || $session_id == "$current_session" ]] || exit 0
-  [[ -z $owner || $owner == "$current_owner" ]] || exit 0
+  if [[ -n $owner && $owner != "$current_owner" ]]; then
+    if [[ -n $session_id && $session_id != "$current_session" ]]; then
+      report_session
+    fi
+    exit 0
+  fi
+  if [[ -n $agent_type && -n $current_type && $agent_type != "$current_type" ]]; then
+    report_session
+    exit 0
+  fi
+  if [[ -n $session_id && $session_id != "$current_session" ]]; then
+    report_session
+    exit 0
+  fi
   [[ -n $session_id || -n $owner || -z $current_session ]] || exit 0
+
+  session_id=${session_id:-$current_session}
+  if [[ -z $agent_type ]]; then
+    agent_type=$current_type
+  fi
+  report_session
 
   for field in status status_since session_id usage type owner; do
     tmux set-option -pqu -t "$TMUX_PANE" "@agent_$field"
@@ -79,8 +118,12 @@ if [[ $status == clear ]]; then
 fi
 
 if [[ -z $agent_type ]]; then
-  agent_type=$(tmux show-options -pqv -t "$TMUX_PANE" @agent_type)
+  agent_type=$current_type
   agent_type=${agent_type:-claude}
+fi
+
+if [[ -z $session_id && $focus_update == 1 ]]; then
+  session_id=$current_session
 fi
 
 if [[ $session_id =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ || $session_id =~ ^ses_[[:alnum:]]+$ ]]; then
@@ -117,6 +160,7 @@ previous=$(tmux show-options -pqv -t "$TMUX_PANE" @agent_status)
 
 tmux set-option -pq -t "$TMUX_PANE" @agent_status "$status"
 [[ $status == "$previous" ]] || tmux set-option -pq -t "$TMUX_PANE" @agent_status_since "$(date +%s)"
+report_session
 
 # Claude's statusLine stores its usage, since only it knows the session cost
 if [[ $agent_type == codex && -n $transcript_path ]]; then
