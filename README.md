@@ -12,6 +12,8 @@ delivery phases, and sessions waiting for you. Type a row number to jump to it.
 
 ![Agent picker with waiting, failed, running, and finished sessions, plus colored tmux tabs](docs/images/session-picker.png)
 
+See [picker status meanings](#picker-status-meanings) for the `STATE` column.
+
 Images throughout these docs show tmux views with sample task names and values.
 Popup borders, sizes, labels, and spacing come from the running interfaces.
 See [capture notes](docs/images/README.md) for their sources.
@@ -101,6 +103,27 @@ The right side of the status bar shows waiting delivery runs and resource usage
 at 80% or above. The run count excludes sessions without a delivery run.
 Claude and opencode can notify you when they need attention; Codex handles its
 own notifications. See [notification behavior](docs/reference.md#notifications).
+
+### Picker status meanings
+
+The `STATE` column in `prefix a` / `prefix r` describes either an agent session
+or its linked delivery run:
+
+| Status | Meaning |
+| --- | --- |
+| `WAITING` | Needs your input, permission, or review |
+| `running` | The agent is working, or the delivery run is still in progress |
+| `done` | The agent's turn finished, or the delivery run was marked complete |
+| `failed` | The agent reported an error, or the delivery run was marked failed |
+| `idle` | The session is ready for another prompt |
+| `quiet` | A running delivery run has no active work reported and no activity update for over 10 minutes |
+| `lost` | The same as `quiet`, but for over an hour and with no connected pane |
+| `stopped` | The delivery run was marked stopped |
+
+Run progress and agent activity are tracked separately. A run can remain
+`running` after its agent finishes a turn, while that tab turns green.
+`quiet` and `lost` describe stale activity reports, not confirmed failures.
+Use `runs --all` to include finished runs and disconnected conversations.
 
 ## Session history and restore
 
