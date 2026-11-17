@@ -12,7 +12,8 @@ delivery phases, and sessions waiting for you. Type a row number to jump to it.
 
 ![Agent picker with waiting, failed, running, and finished sessions, plus colored tmux tabs](docs/images/session-picker.png)
 
-See [picker status meanings](#picker-status-meanings) for the `STATE` column.
+See [picker columns](#picker-columns) for where each value comes from, and
+[picker status meanings](#picker-status-meanings) for the `STATE` labels.
 
 Images throughout these docs show tmux views with sample task names and values.
 Popup borders, sizes, labels, and spacing come from the running interfaces.
@@ -103,6 +104,40 @@ The right side of the status bar shows waiting delivery runs and resource usage
 at 80% or above. The run count excludes sessions without a delivery run.
 Claude and opencode can notify you when they need attention; Codex handles its
 own notifications. See [notification behavior](docs/reference.md#notifications).
+
+### Picker columns
+
+The picker combines agent-skills' session registry with live tmux information.
+Agent hooks record conversation activity. The delivery workflow writes task
+metadata with `runs set`; a conversation can appear without a delivery run.
+
+| Column | Content and source |
+| --- | --- |
+| `#` | Row number assigned by the picker for jumping or opening a PR; it can change when the list is reordered |
+| `ID` | For a delivery run, the ID supplied to `runs set`, often a task number. For a session, its saved title, refreshed from the tmux window name or pane title when automatic naming is enabled; falls back to the conversation ID and displays up to 40 characters |
+| `STATE` | Session activity reported by agent hooks, or the run state recorded with `runs set --state`. A linked session waiting or reporting an error overrides an unfinished run's displayed state; inactivity can produce `quiet` or `lost` |
+| `WHERE` | Live tmux session name and window index, such as `work:2`; falls back to a saved pane ID when its location cannot be resolved, or `-` when disconnected |
+| `PHASE` | Workflow stage written with `runs set --phase`, such as `Review` or `Verify`. A GitHub check can replace it with `MERGED` or `CLOSED` when the linked PR finishes |
+| `PR` | URL saved with `runs set --pr`, displayed as its PR number when it matches a GitHub pull request URL; `-` if none is saved |
+| `NOW` | For a running delivery run, the last tool activity and agent role recorded by the Claude heartbeat hook. Shows `thinking` after that tool finishes, or `-` without activity data |
+| `FOR` | Elapsed time calculated from the tool's start while busy, the latest update while running without an active tool, or the state change otherwise. This is not total conversation duration; `-` means a session has no known state timestamp |
+| `NOTE` | Short message written with `runs set --note`, usually what needs attention or the next step |
+
+`PHASE`, `PR`, and `NOTE` belong to delivery runs, so ordinary session rows leave
+them blank or show `-`. `NOW` needs heartbeat data; it does not infer activity
+from the conversation text. The run ID, phase, and note are supplied by the
+workflow or a manual command, not fetched automatically from a ticket tracker.
+
+For an existing run, a metadata update looks like:
+
+```sh
+runs set APP-101 --phase Review --note "Review login changes"
+```
+
+See [hooks and registry integration](docs/reference.md#hooks-and-registry-integration)
+for how session events reach the registry, and the
+[picker implementation](https://github.com/osvald0/agent-skills/tree/main/global/lib/runs_cli)
+for its data and rendering logic.
 
 ### Picker status meanings
 
