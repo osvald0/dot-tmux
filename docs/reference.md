@@ -2,7 +2,7 @@
 
 [Back to README](../README.md)
 
-Images show real terminal output rendered with sample data. See
+Images show the running terminal interfaces with sample task names and values. See
 [capture notes](images/README.md) for the source of each view.
 
 ## Conversation logs
@@ -59,7 +59,7 @@ terminal feature takes effect.
 `prefix T` groups usage by agent in the current tab, including cached tokens and
 the Codex usage limit when available.
 
-<img src="images/tab-usage.png" width="360" alt="Tab usage showing Claude and Codex token totals, cached tokens, cost, and the Codex five-hour limit">
+<img src="images/tab-usage.png" width="360" alt="Tab usage popup showing sample Claude cost, total tokens, and cached tokens">
 
 Claude's tab cost comes from its status-line payload. Codex's tab cost is an
 estimate at configured API prices, marked `~`; it is not the ChatGPT subscription
@@ -72,10 +72,11 @@ for Claude's tab usage to update.
 
 ### Account usage
 
-`prefix v` shows usage across each account. This example shows plan limits;
-accounts with spend-based billing show spend instead.
+`prefix v` shows usage across each account. This example shows Claude's monthly
+spend and today's spend in UTC, followed by Codex's weekly usage and reset time.
+All amounts and percentages are sample values.
 
-<img src="images/account-usage.png" width="540" alt="Claude and Codex account usage with five-hour and weekly progress bars and reset times">
+<img src="images/account-usage.png" width="540" alt="AI usage popup showing Claude Spend and Today rows, plus Codex Weekly usage and its reset time, with sample values">
 
 The account popup uses the agents' existing logins and caches responses for a
 minute. Press `r` to refresh. On failure, it retains the last values with their

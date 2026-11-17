@@ -12,8 +12,8 @@ delivery phases, and sessions waiting for you. Type a row number to jump to it.
 
 ![Agent picker with waiting, failed, running, and finished sessions, plus colored tmux tabs](docs/images/session-picker.png)
 
-Images throughout these docs render real terminal output with sample data in
-Catppuccin Mocha. Titles above the captures identify the view and its shortcut.
+Images throughout these docs show tmux views with sample task names and values.
+Popup borders, sizes, labels, and spacing come from the running interfaces.
 See [capture notes](docs/images/README.md) for their sources.
 
 The reference also shows [conversation logs](docs/reference.md#conversation-logs),
@@ -65,6 +65,7 @@ Press your tmux prefix before the keys labeled `prefix`.
 | `prefix S` | Show CPU, memory, disk, and agent resource usage |
 | `prefix G` | Open Lazygit |
 | `prefix c` | Create a window in the current directory |
+| `prefix ,` | Rename the current window, for example `APP-101 Login` |
 | `prefix \|` / `prefix -` | Split horizontally / vertically |
 | `prefix h/j/k/l` | Move between panes |
 | `Option+Shift+Arrow` | Resize the current pane |
@@ -77,13 +78,16 @@ its PR, or `q` to close. Both picker shortcuts open the same view.
 `prefix s` opens the tmux tree. Expand a session to browse its windows and panes;
 the preview below the list shows the selected workspace.
 
-![Expanded work session with colored activity dots, a collapsed notes session, and window previews](docs/images/session-tree.png)
+![Expanded work session with numbered task names and colored activity dots, a collapsed docs session, and window previews](docs/images/session-tree.png)
 
 ## Reading agent status
 
 The tab's number block and the dots in `prefix s` show the agent's activity:
 
-![Yellow waiting, blue working, green finished, red failed, and gray ready tabs, with one waiting delivery run](docs/images/agent-status.png)
+![Task tabs APP-101 Login through APP-105 Settings showing yellow waiting, blue working, green finished, red failed, and gray ready states](docs/images/agent-status.png)
+
+Tabs can have descriptive task names. Use `prefix ,` to rename a window; its
+activity color still follows the agent in that window.
 
 | Color | Meaning |
 | --- | --- |
