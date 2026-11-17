@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.local/bin/tmux-agent-status ready"
+            "command": "$HOME/.local/bin/tmux-agent-status ready claude"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.local/bin/tmux-agent-status working"
+            "command": "$HOME/.local/bin/tmux-agent-status working claude"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.local/bin/tmux-agent-status working"
+            "command": "$HOME/.local/bin/tmux-agent-status working claude"
           }
         ]
       }
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.local/bin/tmux-agent-status waiting"
+            "command": "$HOME/.local/bin/tmux-agent-status waiting claude"
           }
         ]
       }
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.local/bin/tmux-agent-status done"
+            "command": "$HOME/.local/bin/tmux-agent-status done claude"
           }
         ]
       }
@@ -57,7 +57,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.local/bin/tmux-agent-status error"
+            "command": "$HOME/.local/bin/tmux-agent-status error claude"
           }
         ]
       }
@@ -67,7 +67,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.local/bin/tmux-agent-status clear"
+            "command": "$HOME/.local/bin/tmux-agent-status clear claude"
           }
         ]
       }
