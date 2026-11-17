@@ -2,12 +2,20 @@
 
 [Back to README](../README.md)
 
+Images show real terminal output rendered with sample data. See
+[capture notes](images/README.md) for the source of each view.
+
 ## Conversation logs
 
 `prefix e` opens logs beside the current agent and leaves focus on the agent.
 Press it again from either pane to close the logs. `prefix W` opens a tmux
 window; `prefix C-e` opens a Ghostty window through AppleScript. Press `q` in
 the viewer to close it. The agent-skills `/logs` command offers the same choices.
+
+The source labels distinguish the main conversation, subagents, and background
+commands. Tool results and formatted JSON appear alongside the messages.
+
+![Conversation log with main messages, a JSON tool result, a reviewer subagent, background checks, and filter keys](images/conversation-logs.png)
 
 | Key in the viewer | Action |
 | --- | --- |
@@ -46,6 +54,13 @@ terminal feature takes effect.
 | `prefix v` | Account limits or spend for Claude and Codex |
 | `prefix S` | System usage and the busiest agent process trees |
 
+### Tab tokens and cost
+
+`prefix T` groups usage by agent in the current tab, including cached tokens and
+the Codex usage limit when available.
+
+<img src="images/tab-usage.png" width="360" alt="Tab usage showing Claude and Codex token totals, cached tokens, cost, and the Codex five-hour limit">
+
 Claude's tab cost comes from its status-line payload. Codex's tab cost is an
 estimate at configured API prices, marked `~`; it is not the ChatGPT subscription
 bill. Unknown Codex models show tokens without a cost. Token totals include
@@ -55,10 +70,24 @@ Setup adds Claude's status line only when none is configured. If you keep your
 own status line, it must call [tmux-claude-statusline](../bin/tmux-claude-statusline)
 for Claude's tab usage to update.
 
+### Account usage
+
+`prefix v` shows usage across each account. This example shows plan limits;
+accounts with spend-based billing show spend instead.
+
+<img src="images/account-usage.png" width="540" alt="Claude and Codex account usage with five-hour and weekly progress bars and reset times">
+
 The account popup uses the agents' existing logins and caches responses for a
 minute. Press `r` to refresh. On failure, it retains the last values with their
 age. Claude shows plan limits or monthly spend, depending on the account;
 Codex shows its plan usage windows.
+
+### System usage
+
+`prefix S` shows machine usage, totals for agent process trees, and the processes
+using the most CPU and memory.
+
+<img src="images/system-usage.png" width="540" alt="System usage showing CPU at 43 percent, memory at 61 percent, disk at 90 percent, agent totals, and the busiest processes">
 
 The system popup refreshes every few seconds. CPU per process is measured
 against one core, so a process can exceed 100%. Memory includes app, wired, and
