@@ -30,6 +30,8 @@ This setup targets macOS. It needs tmux, Git, `jq`, Python 3, and `uv`.
 Install [agent-skills](https://github.com/osvald0/agent-skills)' global tools for
 the session picker and registry. Add `~/.local/bin` to your `PATH`.
 Lazygit is needed for `prefix G`; Ghostty is needed for `prefix C-e`.
+The URL picker (`prefix u`) needs `fzf` and `fzf-tmux` on your `PATH`.
+Setup downloads plugins but does not install these tools or the agent CLIs.
 
 From this checkout:
 
@@ -42,17 +44,28 @@ three agents' status hooks. It preserves unrelated hooks and settings and backs
 up regular config files before replacing them. Keep this checkout: the installed
 files are symlinks to it.
 
-Start tmux, or reload the config in an existing server:
+Start a named workspace:
+
+```sh
+tmux new-session -s work
+```
+
+To reload the config in an existing server:
 
 ```sh
 tmux source-file ~/.tmux.conf
 ```
 
 Restart existing agent sessions to load changed hooks. Codex may ask you to trust them.
+See [installation and updates](docs/reference.md#installation-and-updates) for
+installed paths and backups, and [agent support](docs/reference.md#agent-support)
+for differences between providers.
 
 ## Shortcuts
 
-Press your tmux prefix before the keys labeled `prefix`.
+The default prefix is `Ctrl-b`. Press and release it, then press the listed key.
+For example, `prefix a` means `Ctrl-b`, then `a`. This config does not change an
+existing server's custom prefix.
 
 | Keys | Action |
 | --- | --- |
@@ -67,6 +80,11 @@ Press your tmux prefix before the keys labeled `prefix`.
 | `prefix v` | Show Claude and Codex account usage |
 | `prefix S` | Show CPU, memory, disk, and agent resource usage |
 | `prefix G` | Open Lazygit |
+| `prefix u` | Pick and open a URL from the current pane's visible text |
+| `prefix [` | Enter copy mode to select text or browse scrollback |
+| `prefix y` / `prefix Y` | Copy the current line / pane's working directory |
+| `prefix d` | Detach while leaving sessions and agents running |
+| `prefix R` | Reload the tmux config through tmux-sensible |
 | `prefix c` | Create a window in the current directory |
 | `prefix ,` | Rename the current window, for example `APP-101 Login` |
 | `prefix \|` / `prefix -` | Split horizontally / vertically |
@@ -77,6 +95,11 @@ Press your tmux prefix before the keys labeled `prefix`.
 
 In the agent picker, type a row number to jump, `o` followed by a number to open
 its PR, or `q` to close. Both picker shortcuts open the same view.
+The picker refreshes every 15 seconds when you are not entering a row number.
+
+After detaching, reconnect with `tmux attach -t work` (use your session name).
+See [navigation, names, and clipboard](docs/reference.md#navigation-names-and-clipboard)
+for tree controls, sorting, and copying text.
 
 `prefix s` opens the tmux tree. Expand a session to browse its windows and panes;
 the preview below the list shows the selected workspace.
@@ -91,6 +114,8 @@ The tab's number block and the dots in `prefix s` show the agent's activity:
 
 Tabs can have descriptive task names. Use `prefix ,` to rename a window; its
 activity color still follows the agent in that window.
+In a split window, the tab and window-level dot reflect the active pane;
+expanded pane rows show each agent's own state.
 
 | Color | Meaning |
 | --- | --- |
