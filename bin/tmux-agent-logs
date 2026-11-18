@@ -808,7 +808,7 @@ def print_item(item, expand):
     if not item.rendered or item.rendered[0] != key:
         item.rendered = (key, render_item(item, *key))
 
-    lines = item.rendered[1]
+    lines = item.rendered[1] or [""]
     print(prefix + lines[0] + RESET)
     for line in lines[1:]:
         print(continuation + line + RESET)
